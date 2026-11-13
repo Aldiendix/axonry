@@ -122,9 +122,12 @@ class Orchestrator:
         if rules:
             self._seed_initial(rules)
         cursor = self.db.get("cursor")
-        if cursor is None:       # deposits and commitments before the start are never read: no silent default
+        if cursor is None:       # deposits and commitments before the first season opened are never read
             if start_block is None:
-                raise ValueError("the first intake needs the block the season opened at (start_block)")
+                first = registry.load_rules_versions(registry.seasons(self.d.registry_root)[0], self.d.registry_root)
+                start_block = first[0]["effective_block"]
+            if start_block <= 0:
+                raise ValueError("the first season has no effective_block yet (the block it opens at)")
             cursor = start_block - 1
             self.db.set("cursor", cursor)
         for b in range(cursor + 1, head + 1):

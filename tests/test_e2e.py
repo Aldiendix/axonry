@@ -2,6 +2,8 @@
 benchmarks -> decision -> public files + signed weights, and the miner CLI reading them back."""
 import json
 import random
+
+import pytest
 from axonry import pricing, registry
 
 from bittensor_wallet import Keypair
@@ -910,3 +912,15 @@ def test_the_evaluation_machine_is_kept_through_an_upload_grace(tmp_path):
         clock.t += 120
         orch.eval_machine()
     assert orch.d.fleet.get(EVAL)["state"] == "ready" and EVAL not in orch.d.fleet.released
+
+
+def test_the_first_intake_starts_at_the_first_seasons_effective_block(tmp_path):
+    orch, chain, clock, pub = make(tmp_path)
+    chain.head = 120
+    with pytest.raises(ValueError, match="effective_block"):     # the registry's s1 is not launched (block 0)
+        orch.intake()
+    orch.d.registry_root = registry_copy(tmp_path, effective_block=105)
+    read, items = [], chain.items_in_block
+    chain.items_in_block = lambda b, *a: read.append(b) or items(b, *a)
+    orch.intake()
+    assert read == list(range(105, 121)) and orch.db.get("cursor") == 120

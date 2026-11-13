@@ -1,6 +1,6 @@
 """axonry-orchestrator: the owner's service and its maintenance commands.
 
-  axonry-orchestrator run [--role main|eval|all] [--once] [--start-block N]
+  axonry-orchestrator run [--role main|eval|all] [--once]
                                                      main: intake, schedule (rents run machines), supervise, decide,
                                                      weights, janitor (bootstraps public files first); eval: the
                                                      evaluation machine (rented on demand), collect, evaluate. Run one
@@ -173,9 +173,10 @@ def competition_rules(repo: Path, rules) -> dict:
 def cmd_run(cfg, a):
     orch = build(cfg)
     if a.role in ("main", "all") and orch.db.get("cursor") is None:
-        if a.start_block is None:
-            raise SystemExit("first run: give --start-block (the block the season opened at; nothing earlier is read)")
-        orch.intake(start_block=a.start_block)
+        try:
+            orch.intake()         # the first season's effective_block: nothing earlier is read
+        except ValueError as e:
+            raise SystemExit(str(e))
     if a.role in ("main", "all"):
         orch.bootstrap()
     interval = int(cfg.get("state.tick_seconds", 60))
@@ -280,7 +281,6 @@ def main(argv=None):
     r = sub.add_parser("run")
     r.add_argument("--role", choices=("main", "eval", "all"), default="all")
     r.add_argument("--once", action="store_true")
-    r.add_argument("--start-block", type=int)
     sub.add_parser("status")
     ca = sub.add_parser("calibrate", help="A/A noise of every benchmark on the evaluation GPUs (base vs base)")
     ca.add_argument("--limit", type=int, help="items per benchmark (default: the definitions')")
