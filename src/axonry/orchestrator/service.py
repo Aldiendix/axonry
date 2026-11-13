@@ -81,7 +81,7 @@ class Deps:
     registry_root: Path = registry.ROOT
     work_dir: Path = field(default_factory=lambda: Path(tempfile.gettempdir()) / "axonry-work")
     max_concurrent: int = 4       # runs holding a machine at once (also bounded by the agent backend's capacity)
-    eval_gpu_name: str = "RTX 4090"
+    eval_gpu_name: str = "RTX 5090"
     eval_gpus: int = 8
     eval_idle_minutes: int = 20
 
@@ -108,7 +108,7 @@ class Orchestrator:
         self._publish_season(self.db.sub(sid)["season"])
 
     # ------------------------------------------------------------------------------------------- intake
-    def intake(self, start_block=None):
+    def intake(self):
         """Read finalized blocks in order. A deposit is credited to its sender coldkey's account, in USD at the price
         of its own block (until a price is known it is pending and counts for nothing). A commitment is a
         participant: a hotkey's first commitment on the subnet (the chain only takes one from a registered hotkey)
@@ -123,12 +123,10 @@ class Orchestrator:
             self._seed_initial(rules)
         cursor = self.db.get("cursor")
         if cursor is None:       # deposits and commitments before the first season opened are never read
-            if start_block is None:
-                first = registry.load_rules_versions(registry.seasons(self.d.registry_root)[0], self.d.registry_root)
-                start_block = first[0]["effective_block"]
-            if start_block <= 0:
+            first = registry.load_rules_versions(registry.seasons(self.d.registry_root)[0], self.d.registry_root)
+            if first[0]["effective_block"] <= 0:
                 raise ValueError("the first season has no effective_block yet (the block it opens at)")
-            cursor = start_block - 1
+            cursor = first[0]["effective_block"] - 1
             self.db.set("cursor", cursor)
         for b in range(cursor + 1, head + 1):
             try:

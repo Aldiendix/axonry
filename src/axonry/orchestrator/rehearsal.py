@@ -24,6 +24,7 @@ from pathlib import Path
 
 from .. import pricing, registry
 from ..chain.extrinsics import parse_extrinsic
+from ..common import layout
 from ..common.canon import write_json
 from ..common.ids import make_commitment, make_sid
 from ..intake.github import GitHub
@@ -325,8 +326,9 @@ def scenario(world):
     sf = world.commit(frank, a_files)
     world.expect_status(sf, "REJECTED", "COPY")
 
-    # bob: an independent method, committed after alice: queued behind her
-    b_files = {"entry.json": entry(base), "METHOD.md": STOP_METHOD.encode()}
+    # bob: an independent method stacked on the initial champion, committed after alice: queued behind her
+    initial = make_sid(world.rules["effective_block"], 0)
+    b_files = {"entry.json": entry(base, parent=initial), "METHOD.md": STOP_METHOD.encode()}
     sb = world.commit(bob, b_files)
     world.expect_carried(world.open_pr(bob, b_files), sb)
 
@@ -364,16 +366,18 @@ def scenario(world):
     world.expect_final(sb)
     world.expect_billed(sa)
     world.expect_billed(sb)
+    world.expect_stacked(sb, initial)
 
 
 # ------------------------------------------------------------------------------------------------ world
 class World:
     """What the scenario drives and checks. Every expectation is recorded with its outcome for the report."""
 
-    def __init__(self, db, chain, repo, rules, treasury, price_at, log):
+    def __init__(self, db, chain, repo, rules, treasury, price_at, log, public):
         from bittensor_wallet import Keypair  # noqa: PLC0415
         self.Keypair, self.db, self.chain, self.repo, self.rules = Keypair, db, chain, repo, rules
         self.treasury, self.price_at, self.log, self.miners, self.results = treasury, price_at, log, {}, []
+        self.public = public
         self.run_usd = pricing.run_cost_musd(rules) / pricing.MUSD
 
     def note(self, text):
@@ -481,6 +485,13 @@ class World:
                    f"charged {got / 1e6:.4f} USD for {((t.get('agent_end') or 0) - t['kickoff']) / 3600:.2f} h "
                    f"(at most {self.run_usd:.2f})")
 
+    def expect_stacked(self, sid, parent):
+        """A stacked entry's upload is a layer on its parent: built on the published chain and admitted."""
+        s, adm = self.db.sub(sid), self.public.get(layout.submission(sid, "admission.json"))
+        adm = json.loads(adm) if adm else {}
+        self.check(f"{sid} stacked on {parent} and admitted", s["record"].get("parent") == parent and adm.get("passed"),
+                   f"parent {s['record'].get('parent')}, admission {adm.get('passed')} {adm.get('violations') or ''}")
+
     def expect_final(self, sid, timeout=12 * 3600):
         got = self._wait(lambda: (self.db.sub(sid) or {}).get("status") in ("PUBLISHED", "REJECTED", "FAILED", "DISQUALIFIED"),
                          timeout)
@@ -514,14 +525,20 @@ def run(cfg, hours=1.5, limit=40, samples=1, fresh=False, review_command=None):
     owner = Keypair.create_from_uri("//rehearsal-owner")
     treasury = Keypair.create_from_uri("//rehearsal-treasury").ss58_address
 
+    chain = SimChain(registry.latest_rules()["netuid"])
+    prev = HOME / "registry" / "seasons" / "rehearsal" / "v1.json"     # a resumed rehearsal keeps its opening block
+    opened = (json.loads(prev.read_text())["effective_block"] if prev.exists() and not fresh
+              else chain.finalized_head() + 1)
+
     def patch(rules):
+        rules["effective_block"] = opened
         rules["fee"].update(treasury=treasury, assets=["tao"])
         rules["review"]["reviewers"] = [REVIEWER]
         rules["run"].update(hours=hours, wrap_minutes=min(30, int(hours * 60 / 4)), upload_grace_minutes=10)
     reg = overridden_registry(HOME / "registry", limit, samples, season="rehearsal", rules_patch=patch)
     rules = registry.load_rules_versions("rehearsal", reg)[-1]
     comp_rules = competition_rules(cfg.path_of("competition.local_path"), rules)
-    chain, repo = SimChain(rules["netuid"]), SimRepo(rules["competition"]["repo"])
+    repo = SimRepo(rules["competition"]["repo"])
     # the rehearsal's own corner of the private bucket: nothing it writes can collide with a live season's keys
     public = private_store(cfg, "rehearsal/public/", public=True)
     private = private_store(cfg, "rehearsal/private/")
@@ -539,7 +556,7 @@ def run(cfg, hours=1.5, limit=40, samples=1, fresh=False, review_command=None):
 
     first = Orchestrator(deps(DB(HOME / "db.sqlite")))
     if first.db.get("cursor") is None:
-        first.intake(start_block=chain.finalized_head() + 1)
+        first.intake()
     first.bootstrap()
     stop = threading.Event()
 
@@ -561,7 +578,7 @@ def run(cfg, hours=1.5, limit=40, samples=1, fresh=False, review_command=None):
                threading.Thread(target=reviewer, daemon=True)]
     for t in threads:
         t.start()
-    world = World(DB(HOME / "db.sqlite"), chain, repo, rules, treasury, cached_price(), log)
+    world = World(DB(HOME / "db.sqlite"), chain, repo, rules, treasury, cached_price(), log, public)
     try:
         scenario(world)
         validate_weights(world, public, owner.ss58_address, rules["netuid"], chain)

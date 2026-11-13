@@ -114,7 +114,7 @@ def deps(cfg: Config, db, rules, comp_rules, **parts):
         "private": private_store(cfg), "comp_rules": comp_rules, "price_at": cached_price(),
         "work_dir": cfg.path_of("state.work_dir"),
         "max_concurrent": min(int(cfg.get("vast.max_runs", 16)), runner.capacity),
-        "eval_gpu_name": cfg.get("vast.eval_gpu_name", "RTX 4090"), "eval_gpus": int(cfg.get("vast.eval_gpus", 8)),
+        "eval_gpu_name": cfg.get("vast.eval_gpu_name", "RTX 5090"), "eval_gpus": int(cfg.get("vast.eval_gpus", 8)),
         "eval_idle_minutes": int(cfg.get("vast.eval_idle_minutes", 20)), **parts})
 
 
@@ -216,7 +216,7 @@ def cmd_calibrate(cfg, a):
     fl = fleet(cfg, DB(cfg.path_of("state.db")), rules)
     rented = fl.get(EVAL) is None
     if rented:
-        fl.rent(EVAL, cfg.get("vast.eval_gpu_name", "RTX 4090"), int(cfg.get("vast.eval_gpus", 8)))
+        fl.rent(EVAL, cfg.get("vast.eval_gpu_name", "RTX 5090"), int(cfg.get("vast.eval_gpus", 8)))
     try:
         while (state := fl.advance(EVAL)) not in ("ready", "failed"):
             print(f"evaluation machine: {state}", flush=True)

@@ -2,6 +2,7 @@
 benchmarks -> decision -> public files + signed weights, and the miner CLI reading them back."""
 import json
 import random
+from pathlib import Path
 
 import pytest
 from axonry import pricing, registry
@@ -305,6 +306,14 @@ def make(tmp_path):
     return Orchestrator(deps), chain, clock, pub
 
 
+def open_season(orch, block):
+    """The season opens at `block` (its effective_block): the first intake reads from there."""
+    from axonry.common.canon import write_json
+    f = next((Path(orch.d.registry_root) / "seasons" / "s1").glob("*.json"))
+    write_json(f, {**json.loads(f.read_text()), "effective_block": block})
+    orch.intake()
+
+
 def registry_copy(tmp_path, **rules_patch):
     """The repo's registry with the current season's rules patched (None removes a key)."""
     import shutil
@@ -359,7 +368,7 @@ def test_full_flow(tmp_path, capsys):
     for i, n in enumerate("ABCD"):
         pay(orch, chain, n, 101 + i, 2)
     chain.head = 110
-    orch.intake(start_block=101)
+    open_season(orch, 101)
     assert [s["status"] for s in orch.db.subs()] == ["QUEUED"] * 4   # committed + approved
 
     run_until_quiet(orch, clock)
@@ -435,7 +444,7 @@ def test_accounts_and_fees(tmp_path):
     deposit(chain, "B", 100, 3 * FEE)                  # another coldkey's money never pays for A's hotkey
     gh.add_pr(1, HOTKEYS["A"], "a1", v1)
     chain.head = 101
-    orch.intake(start_block=100)
+    open_season(orch, 100)
     sid, ck = "0000000101-0001", COLDKEYS["A"]
     s = orch.db.sub(sid)
     assert (s["status"], s["reason_code"], s["reason"]) == ("WAITING", "INSUFFICIENT_FUNDS", "insufficient funds")
@@ -489,7 +498,7 @@ def test_one_registration_one_entry(tmp_path):
     commit(chain, "A", v2, 102)                         # a second commitment while the first waits: void
     gh.add_pr(1, HOTKEYS["A"], "a2", v2)
     chain.head = 102
-    orch.intake(start_block=101)
+    open_season(orch, 101)
     (s,) = orch.db.subs()
     assert s["sid"] == "0000000101-0001" and s["status"] == "WAITING" and s["reason_code"] == "NO_PR"
     assert orch.db.get("prs")["1"]["reason_code"] == "UNCOMMITTED" and "not the committed" in orch.db.get("prs")["1"]["reason"]
@@ -518,7 +527,7 @@ def test_copy_cannot_overtake_the_original(tmp_path):
     na = pay(orch, chain, "A", 101, 1)
     nb = pay(orch, chain, "B", 105, 1, blobs=copy)
     chain.head = 105
-    orch.intake(start_block=101)
+    open_season(orch, 101)
     sa, sb = "0000000101-0001", "0000000105-0001"
     gh.verdicts[(nb, content_digest_of_blobs(copy))] = "approved"    # the copy is reviewed first
     run_until_quiet(orch, clock, rounds=3)
@@ -541,7 +550,7 @@ def test_nobody_else_can_carry_a_hotkeys_entry(tmp_path):
     gh.add_pr(1, HOTKEYS["A"], "evil", blobs_for("A"))
     gh.prs[1]["author"] = "mallory"
     chain.head = 101
-    orch.intake(start_block=101)
+    open_season(orch, 101)
     (s,) = orch.db.subs()
     assert s["status"] == "WAITING" and s["reason_code"] == "NO_PR" and not orch.db.accounts()[COLDKEYS["A"]]["charged_usd"]
     w = orch.db.get("prs")["1"]
@@ -568,7 +577,7 @@ def test_a_content_belongs_to_its_earliest_commitment(tmp_path):
     gh.add_pr(3, HOTKEYS["A"], "a-renamed", a)            # a new account took the login "u" after a rename
     gh.prs[3]["author_id"] = 777
     chain.head = 103
-    orch.intake(start_block=98)
+    open_season(orch, 98)
     sb = orch.db.of_hotkey(HOTKEYS["B"])
     assert (sb["status"], sb["reason_code"]) == ("REJECTED", "COPY") and "0000000101-0001" in sb["reason"]
     w = orch.db.get("prs")
@@ -584,7 +593,7 @@ def test_disqualified_champion_hands_back_the_title(tmp_path):
     orch.bootstrap()
     pay(orch, chain, "A", 101, 1)
     chain.head = 101
-    orch.intake(start_block=101)
+    open_season(orch, 101)
     run_until_quiet(orch, clock)
     sid = orch.db.champion("s1")["sid"]
     orch.disqualify(sid, "agent log: downloaded the benchmark")
@@ -601,7 +610,7 @@ def test_review_lock_and_carrier(tmp_path):
     na = pay(orch, chain, "A", 101, 1)
     nb = pay(orch, chain, "B", 102, 1)
     chain.head = 102
-    orch.intake(start_block=101)
+    open_season(orch, 101)
     sa, sb = "0000000101-0001", "0000000102-0001"
     assert orch.db.sub(sa)["status"] == orch.db.sub(sb)["status"] == "REVIEW"
 
@@ -632,7 +641,7 @@ def test_stacking_on_a_published_parent(tmp_path):
     orch, chain, clock, pub = make(tmp_path)
     pay(orch, chain, "A", 101, 1)
     chain.head = 101
-    orch.intake(start_block=101)
+    open_season(orch, 101)
     run_until_quiet(orch, clock, rounds=6)
     sa = "0000000101-0001"
     assert orch.db.sub(sa)["reason_code"] == "NEW_CHAMPION"
@@ -658,7 +667,7 @@ def test_a_parent_that_can_never_qualify_rejects(tmp_path):
     orch, chain, clock, pub = make(tmp_path)
     pay(orch, chain, "E", 101, 1, parent="0000000001-0001")
     chain.head = 101
-    orch.intake(start_block=101)
+    open_season(orch, 101)
     (s,) = orch.db.subs()
     assert (s["status"], s["reason_code"]) == ("REJECTED", "BAD_PARENT") and not orch.db.accounts()[COLDKEYS["E"]]["charged_usd"]
 
@@ -669,7 +678,7 @@ def test_our_outages_never_fail_a_ticket(tmp_path):
     orch, chain, clock, pub = make(tmp_path)
     pay(orch, chain, "A", 101, 1)
     chain.head = 101
-    orch.intake(start_block=101)
+    open_season(orch, 101)
     sid = "0000000101-0001"
     real_admit = orch.d.executor.admit
     outages = {"n": 0}
@@ -715,7 +724,7 @@ def test_board(tmp_path):
     for i, n in enumerate("ACD"):
         pay(orch, chain, n, 101 + i, 2)
     chain.head = 110
-    orch.intake(start_block=101)
+    open_season(orch, 101)
     run_until_quiet(orch, clock)                                   # A champion; C, D decided against A
     gh = orch.d.github
     gh.approve_all = False
@@ -765,7 +774,7 @@ def test_a_vanished_machine_runs_again_at_no_cost(tmp_path):
         deposit(chain, name, block, 2 * FEE)
         orch.d.github.add_pr(n + 1, HOTKEYS[name], f"{name.lower()}1", v)
     chain.head = 102
-    orch.intake(start_block=101)
+    open_season(orch, 101)
     sa, sb = "0000000101-0001", "0000000102-0001"
     orch.schedule()
     assert orch.db.sub(sa)["status"] == "RUNNING" and orch.db.sub(sb)["status"] == "QUEUED"
@@ -807,8 +816,8 @@ def test_a_season_can_open_with_an_initial_champion(tmp_path):
     with_initial_champion(orch, tmp_path)
     orch.bootstrap()
     chain.head = 100
-    orch.intake(start_block=100)
-    g = "0000000000-0000"
+    open_season(orch, 100)
+    g = "0000000100-0000"
     assert orch.db.sub(g)["status"] == "COLLECTING" and orch.db.sub(g)["hotkey"] is None
     for n, block in (("A", 101), ("E", 102)):
         v = blobs_for(n, parent=g if n == "E" else None)
@@ -841,14 +850,14 @@ def test_the_initial_champion_holds_uid0(tmp_path):
     with_initial_champion(orch, tmp_path)
     orch.bootstrap()
     chain.head = 100
-    orch.intake(start_block=100)
+    open_season(orch, 100)
     run_until_quiet(orch, clock, rounds=3)
-    assert orch.db.champion("s1")["sid"] == "0000000000-0000"
+    assert orch.db.champion("s1")["sid"] == "0000000100-0000"
     assert json.loads(pub.get(layout.WEIGHTS))["weights"] == [{"uid": 0, "hotkey": None, "weight": 1.0}]
     orch.db.set("status_at", 0)
     orch.publish_status()
     champ = json.loads(pub.get(layout.STATUS))["champion"]
-    assert champ == {"sid": "0000000000-0000", "hotkey": None, "pr": None, "title": "the paper's model",
+    assert champ == {"sid": "0000000100-0000", "hotkey": None, "pr": None, "title": "the paper's model",
                      "initial": "paper"}
 
 
@@ -861,7 +870,7 @@ def test_a_failed_start_keeps_the_machine(tmp_path):
     deposit(chain, "A", 101, 2 * FEE)
     orch.d.github.add_pr(1, HOTKEYS["A"], "a1", v)
     chain.head = 101
-    orch.intake(start_block=101)
+    open_season(orch, 101)
     sid, real = "0000000101-0001", orch.d.runner.prepare
     orch.d.runner.prepare = lambda *a: (_ for _ in ()).throw(RuntimeError("arbos relay unreachable"))
     orch.schedule()
@@ -880,7 +889,7 @@ def test_a_vanished_evaluation_machine_is_replaced(tmp_path):
     deposit(chain, "A", 101, 2 * FEE)
     orch.d.github.add_pr(1, HOTKEYS["A"], "a1", v)
     chain.head = 101
-    orch.intake(start_block=101)
+    open_season(orch, 101)
     orch.schedule()
     clock.t += 9 * 3600
     orch.supervise()                                   # COLLECTING: work for the evaluation machine
@@ -903,7 +912,7 @@ def test_the_evaluation_machine_is_kept_through_an_upload_grace(tmp_path):
     deposit(chain, "A", 101, 2 * FEE)
     orch.d.github.add_pr(1, HOTKEYS["A"], "a1", v)
     chain.head = 101
-    orch.intake(start_block=101)
+    open_season(orch, 101)
     orch.schedule()
     clock.t = orch.db.run("0000000101-0001")["task"]["run"]["deadline"]
     orch.supervise()                                   # deadline: COLLECTING, in its upload grace
