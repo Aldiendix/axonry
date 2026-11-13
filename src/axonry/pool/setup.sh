@@ -23,6 +23,7 @@ for t in time check; do
 done
 
 mkdir -p $R/models $R/repos/WeightSpaceProgramming $R/wsp_work $R/eval /workspace/models
+chmod 700 $R/wsp_work $R/eval          # evaluation data: never readable by the agent user
 tar -xf "$B/wsp.tar" -C $R/repos/WeightSpaceProgramming
 for doc in "$B"/bases/*.json; do
   d=$(basename "$doc" .json)

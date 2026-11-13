@@ -25,6 +25,20 @@ def limits_from(comp_rules: dict) -> dict:
     }
 
 
+def _parent(task) -> str:
+    p = task.get("parent")
+    if not p:
+        return ""
+    return f"""
+## Starting point: the parent edit
+This entry stacks on the published submission `{p['sid']}`: its edit (with its own parents) is in this bundle under
+`parent/edit/`. Copy it to the sandbox as `parent/edit/` next to task.json (where `axonry-check` looks for it) and
+start the case from it (`python -m wsp.case init <case> ... --parent parent/edit/edit.json`). Your edit is a new
+layer on that model: keep its `"parent"` (wsp.upload writes it as `parent/edit.json`); the limits apply to your own
+ops, measured against the parent model.
+"""
+
+
 def _fmt_ts(ts):
     return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(ts))
 
@@ -43,9 +57,9 @@ do. Your method is in `submission/METHOD.md` (written by the miner); follow it w
 Improve base model `{task['base']}` on the benchmarks by **editing its weights directly** (method guide: the
 toolkit's weight-edit skill: `.claude/skills/weight-edit/` (Claude-style agents) or `.agents/skills/weight-edit/`
 (Codex), same content, under `/workspace/WeightSpaceProgramming/`; toolkit README alongside), producing an edit spec
-(`edit.json` + `edit.npz`, with the `derive/` code that computes it) that the organizer applies to the official
-base weights. You do not upload weights. Benchmarks are not available to you; use the practice data only.
-
+(`edit.json` + `edit.npz`) that the organizer applies to the official base weights{" on top of the parent edit" if task.get("parent") else ""}.
+You do not upload weights. Benchmarks are not available to you; use the practice data only.
+{_parent(task)}
 ## Time
 - Start: {_fmt_ts(run['start'])}
 - **Deadline: {_fmt_ts(run['deadline'])}** ({(run['deadline'] - run['start']) // 3600} h). Anything uploaded later is ignored.
@@ -69,18 +83,18 @@ base weights. You do not upload weights. Benchmarks are not available to you; us
 
 ## Rules for the edit (violations are rejected before evaluation, with the reason published)
 - Editable: {lim['editable_tensors']}
-- Ops: {', '.join(lim['ops_allowed'])} (declarative, applied to the official base weights).
+- Ops: {', '.join(lim['ops_allowed'])} (declarative, applied to the starting model's weights).
 - Payload (arrays in the spec) at most {lim['max_payload_bytes']} bytes; any number of tensors.
 - Relative change at most {lim['max_relative_change_per_tensor']} per tensor and {lim['max_global_relative_change']} over all editable matrices.
 - Payload: {lim['payload']}.
 - Relative change: {lim['relative_change']}.
 - No overfitting: {lim['no_overfitting']}
-- Practice data (GSM8K / MATH train) ships with the toolkit (`practice:` sets in wsp.data); benchmark sets are not here.
-- Self-check before uploading: `axonry-check <dir with edit.json, edit.npz, REPORT.md>` runs exactly the organizer's
-  admission check (same code).
+- Practice data ships with the toolkit (`practice:` sets in wsp.data); benchmark sets are not here.
+- Self-check before uploading, in the sandbox: `axonry-check <dir with edit.json, edit.npz, REPORT.md> --task task.json`
+  runs exactly the organizer's admission check (same code).
 
 ## Upload (protocol {task['upload_protocol']}, defined in the toolkit's rules.json)
-1. `python -m wsp.upload <case> <edit> --task task.json [--derive DIR]` (in the sandbox: copy task.json there first)
+1. `python -m wsp.upload <case> <edit> --task task.json` (in the sandbox: copy task.json there first)
    packages the case's edit and report and uploads the files, then `manifest.json`, to `{task['r2']['prefix']}`
    with the temporary credentials in `task.json` (they expire at the deadline). Cases live in `$WSP_CASES`.
 2. Files: {', '.join(lim['upload_files'])}; `edit.json` must have `"base": "{task['base']}"`.
@@ -126,13 +140,13 @@ def continue_message(task: dict, now: int) -> str:
 
 def wrap_message(task: dict, now: int) -> str:
     left = max(task["run"]["deadline"] - now, 0)
-    return (f"{left // 60} minutes left. Stop exploring: run axonry-check on your best result and upload it now "
+    return (f"{left // 60} minutes left. Stop exploring: run axonry-check (--task task.json) on your best result and upload it now "
             "(python -m wsp.upload ... --task task.json), with an up-to-date REPORT.md.")
 
 
 def budget_message(task: dict, usd: float) -> str:
     return (f"This run's agent has used {usd:.2f} of its {task['run']['max_agent_usd']} USD. Stop exploring: run "
-            "axonry-check on your best result and upload it now (python -m wsp.upload ... --task task.json); the run "
+            "axonry-check (--task task.json) on your best result and upload it now (python -m wsp.upload ... --task task.json); the run "
             "stops when the budget is used up.")
 
 

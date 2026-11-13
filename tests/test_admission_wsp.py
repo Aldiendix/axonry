@@ -84,3 +84,15 @@ def test_stacked_edit_limits_only_new_layer(tmp_path, base):
     assert r["passed"], r["violations"]
     assert r["info"]["tensors"] == 1                       # only the child's own ops are counted
     assert len(r["info"]["chain"]) == 2
+
+
+def test_axonry_check_builds_a_stacked_upload_on_the_bundles_parent(tmp_path, base):
+    from axonry import sandbox_tools
+    parent = spec_dir(tmp_path, "bundle_parent", [ablate(1, 0.1, cols=[0, 1])])
+    (tmp_path / "task.json").write_text(json.dumps({"base": BASE_ID, "parent": {"sid": "0000000000-0000"}}))
+    (tmp_path / "parent").mkdir()
+    parent.rename(tmp_path / "parent" / "edit")
+    up = spec_dir(tmp_path, "upload", [ablate(2, 0.1, cols=[0, 1])], parent="parent/edit.json")
+    args = ["check", str(up), "--task", str(tmp_path / "task.json"), "--base-dir", str(base)]
+    assert sandbox_tools.main(args) == 0
+    assert not (up / "parent").exists()                     # the upload itself is left as it is

@@ -2,7 +2,9 @@
 
   axonry-time                      time left until the run's deadline (/etc/axonry-deadline, written when the
                                    machine is handed to the run)
-  axonry-check OUT_DIR             the organizer's admission check on OUT_DIR (edit.json, edit.npz, derive/, REPORT.md)
+  axonry-check OUT_DIR --task task.json   the organizer's admission check on OUT_DIR (edit.json, edit.npz, REPORT.md);
+                                   a stacked edit is checked on the parent chain (--parent, default parent/edit
+                                   beside task.json)
 Uploading is the competition toolkit's job: python -m wsp.upload <case> <edit> --task task.json (schema: the protocol's upload.schema).
 """
 import argparse
@@ -22,10 +24,24 @@ def time_left(_a):
 
 
 def check(a):
+    import shutil  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
+
     from .evaluation.admit_remote import admit  # noqa: PLC0415
 
-    task = json.loads(Path(a.task).read_text()) if a.task else {}
-    res = admit(a.out_dir, a.base_dir, task.get("base") or a.base_id)
+    task_path = Path(a.task)
+    if not task_path.exists():
+        raise SystemExit(f"{task_path} not found: copy the bundle's task.json here or pass --task")
+    task, out = json.loads(task_path.read_text()), Path(a.out_dir)
+    with tempfile.TemporaryDirectory(dir=out.parent) as tmp:
+        if task.get("parent") and not (out / "parent").exists():   # uploads only reference the published parent
+            parent = Path(a.parent) if a.parent else task_path.parent / "parent" / "edit"
+            if not (parent / "edit.json").exists():
+                raise SystemExit(f"the parent edit is not at {parent}: copy the bundle's parent/edit/ there or "
+                                 "pass --parent")
+            out = shutil.copytree(out, Path(tmp) / "out")
+            shutil.copytree(parent, out / "parent")
+        res = admit(str(out), a.base_dir, task["base"])
     print(json.dumps(res, indent=1))
     return 0 if res["passed"] else 1
 
@@ -37,9 +53,9 @@ def main(argv=None):
     sub.add_parser("time")
     c = sub.add_parser("check")
     c.add_argument("out_dir")
-    c.add_argument("--task")
+    c.add_argument("--task", default="task.json")
+    c.add_argument("--parent", help="the parent edit directory (default: parent/edit beside task.json)")
     c.add_argument("--base-dir", default="/workspace/base")  # the verified base, read-only
-    c.add_argument("--base-id")
     argv = list(sys.argv[1:] if argv is None else argv)
     alias = {"axonry-time": "time", "axonry-check": "check"}.get(prog)
     if alias:
