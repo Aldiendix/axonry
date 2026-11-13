@@ -16,8 +16,8 @@ One registration, one entry: a hotkey's first commitment on the subnet is its su
   collect   staging upload -> admission on the evaluation machine               -> ADMITTED | REJECTED | FAILED
   evaluate  ADMITTED -> benchmarks (the base first, once, if it is the reference)  -> SCORED
   decide    SCORED in priority order vs the champion of the moment               -> PUBLISHED (+ weights, merge)
+  janitor   staging uploads of finished submissions; old state snapshots
 A season may open with an initial champion (rules "initial_champion", e.g. the paper's model): see _seed_initial.
-  janitor   retention of non-champion models
 Every external system is injected (see Deps), so the whole flow runs against fakes in tests.
 
 Status values (public): WAITING REVIEW QUEUED RUNNING COLLECTING ADMITTED SCORED PUBLISHED REJECTED FAILED
@@ -47,7 +47,7 @@ from ..evaluation import staging
 from ..evaluation.executor import JobFailed
 from ..intake import binding
 from ..pool.vast import EVAL, keypair
-from ..publish import janitor, publisher
+from ..publish import publisher
 from .db import DB
 
 log = logging.getLogger("axonry")
@@ -567,14 +567,7 @@ class Orchestrator:
             if not adm["passed"]:
                 self._reject(sid, "REJECTED_RULES", "; ".join(adm["violations"])[:2000])
                 continue
-            try:                     # straight from the evaluation machine to the public bucket
-                creds = self.d.issue_creds(self.d.public, layout.submission_model_prefix(sid), 3 * 3600)
-                files = self.d.executor.upload_model(sid, creds.as_dict())
-            except Exception as e:   # ours: retried; the admission above is republished with identical bytes
-                self._backoff(s, f"model upload: {e}")
-                continue
-            publisher.publish_model(self.d.public, sid, files, rec["base"], adm["model_digest"])
-            self.db.update(sid, "ADMITTED", model_available=1, record_patch={
+            self.db.update(sid, "ADMITTED", record_patch={
                 "model_digest": adm["model_digest"], "timeline": {**rec["timeline"], "admitted": self.now()}})
             self._recovered(s)
 
@@ -804,8 +797,7 @@ class Orchestrator:
             rows.append({"sid": s["sid"], "hotkey": s["hotkey"], "status": s["status"], "reason_code": s["reason_code"],
                          "base": r.get("base"), "wins": r.get("wins"), "decision": r.get("decision"),
                          "reference": r.get("reference"), "scores": r.get("scores"),
-                         "pr": (r.get("pr") or {}).get("number"), "title": (r.get("pr") or {}).get("title"),
-                         "model_available": bool(s["model_available"]), "decided_at": s["decided_at"]})
+                         "pr": (r.get("pr") or {}).get("number"), "title": (r.get("pr") or {}).get("title"), "decided_at": s["decided_at"]})
             if s["status"] == "PUBLISHED":
                 models[s["sid"]] = self.db.results(s["sid"])
         front = []
@@ -926,19 +918,10 @@ class Orchestrator:
                 for s in sorted(self.db.subs(), key=self.priority) if s["pr_number"]]
 
     def janitor(self, every=3600, keep_snapshots=48):
-        """Hourly retention: non-champion models (public); staging uploads of finished submissions (their edit
-        is published; nothing in the private bucket outlives its purpose); old state snapshots."""
+        """Hourly: staging uploads of finished submissions (their edit is published; nothing in the private bucket
+        outlives its purpose) and old state snapshots."""
         if self.d.clock() - self.db.get("janitor_at", 0) < every:
             return
-        ever = {c["sid"] for c in self.db.champions()}
-        for season in registry.seasons(self.d.registry_root):
-            rules = registry.load_rules_versions(season, self.d.registry_root)[-1]
-            rows = [{"sid": s["sid"], "decided_at": s["decided_at"], "model_available": bool(s["model_available"])}
-                    for s in self.db.subs(season=season)]
-            deleted = janitor.run(self.d.public, rows, ever, rules["retention"]["non_champion_model_days"],
-                                  lambda sid: self.db.update(sid, model_available=0), self.d.clock())
-            if deleted:
-                self._publish_season(season)
         for s in self.db.subs(status=("PUBLISHED", "REJECTED", "FAILED")):
             self.d.private.delete_prefix(layout.staging_prefix(s["sid"]))
         snaps = sorted(k for k, _ in self.d.private.list(layout.STATE_PREFIX))

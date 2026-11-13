@@ -1,5 +1,5 @@
 """The single writer of the public bucket. Dependencies are written before what references them:
-  edit/ -> admission.json -> model/ -> results/ -> score.json -> submission.json
+  edit/ -> admission.json -> results/ -> score.json -> submission.json
   -> seasons/<s>/matches.json -> leaderboard.json -> weights.json -> index.json
 Immutable objects are write-once (store enforces); weights.json carries a monotonic sequence and the owner signature.
 """
@@ -15,8 +15,7 @@ from ..common.sign import sign_doc, verify_doc
 
 SCHEMAS = {"weights": "axonry.weights/1", "score": "axonry.score/1", "submission": "axonry.submission/1",
            "admission": "axonry.admission/1", "matches": "axonry.matches/1", "leaderboard": "axonry.leaderboard/1",
-           "index": "axonry.index/1", "status": "axonry.status/1",
-           "model": "axonry.model/1", "ruling": "axonry.ruling/1"}
+           "index": "axonry.index/1", "status": "axonry.status/1", "ruling": "axonry.ruling/1"}
 
 
 class PublishError(RuntimeError):
@@ -58,21 +57,6 @@ def publish_results(store, sid, bench_key, rows_jsonl: bytes):
     rows = [{k: v for k, v in json.loads(line).items() if k != "text"} for line in rows_jsonl.split(b"\n") if line.strip()]
     data = "\n".join(json.dumps(r, sort_keys=True) for r in rows).encode()
     store.put(layout.submission_results(sid, bench_key), gzip.compress(data, mtime=0), "application/gzip")
-
-
-def publish_model(store, sid, files: dict, base_id: str, model_digest: str):
-    """model/: only the files the edit changed (uploaded by the evaluation machine: files = {name: size}, checked
-    here), plus axonry_model.json saying how to assemble the full model."""
-    prefix = layout.submission_model_prefix(sid)
-    listed = dict(store.list(prefix))
-    missing = {n: size for n, size in files.items() if listed.get(prefix + n) != size}
-    if missing or not files:
-        raise PublishError(f"model of {sid}: not in the bucket as uploaded: {sorted(missing) or 'no files'}")
-    _json(store, prefix + "axonry_model.json", {
-        "schema": SCHEMAS["model"], "sid": sid, "base": base_id, "base_definition": layout.base_def(base_id),
-        "model_digest": model_digest, "files": files,
-        "assemble": "the base snapshot named by base_definition (HF repo at its revision), with every file present "
-                    "here replacing the base file of the same name"})
 
 
 def publish_admission(store, sid, admission: dict):

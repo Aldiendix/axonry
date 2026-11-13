@@ -107,16 +107,6 @@ class SshExecutor:
         except vast.VastError as e:
             raise ExecError(f"eval host: {e}") from e
 
-    def upload_model(self, sid: str, creds: dict) -> dict:
-        """The built model's own files (the edited shards and the build manifest; untouched files are links to the
-        base) go from the evaluation machine straight to the public bucket, with credentials scoped to the model's
-        prefix. -> {name: size}."""
-        out = self._job(sid, ["env", f"AXONRY_R2_CREDS={json.dumps(creds)}", "python3", "-m",
-                              "axonry.evaluation.publish_remote", "model"], gpus=False, timeout=3 * 3600)
-        i = out.find("{")
-        if i < 0:
-            raise ExecError(f"model upload produced no result: {out[-500:]}")
-        return json.loads(out[i:])["files"]
 
     def admit(self, sid: str, spec_dir: Path, base_doc: dict) -> dict:
         from ..registry import base_dirname  # noqa: PLC0415

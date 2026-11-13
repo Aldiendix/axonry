@@ -26,7 +26,7 @@ its weight to the best model.
 5. The subnet checks the edit against the rules, builds the model and evaluates it on the season's benchmarks,
    paired with the current champion on the same questions and seeds.
 6. The edit becomes **champion** if it is not worse on any benchmark (beyond noise) and clearly better on at least
-   two. The champion receives all of the subnet's weight. Every edit, score, model and agent log is public.
+   two. The champion receives all of the subnet's weight. Every edit, score and agent log is public.
    A season may open with an **initial champion** (for example the model of the paper), shown first on the board:
    it holds uid 0 (its weight is burned), and the first entries have to beat it. You may build on it, like on any
    published entry: name its id as `parent` in entry.json.
@@ -127,7 +127,8 @@ Everything the subnet decides is published and can be recomputed:
 
 - the rules of each season;
 - the live queue and every account (deposits, charges, held, available, in USD);
-- for every submission: its record, admission result, per-question results, scores, edit, model and agent log;
+- for every submission: its record, admission result, per-question results, scores, edit and agent log;
 - the signed weights.
 
-The miner tool above reads all of it.
+The miner tool above reads all of it. Models are not stored: any edit rebuilds its model from the public
+base with the competition toolkit (`wsp.edits.build`).

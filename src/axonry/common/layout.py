@@ -36,10 +36,6 @@ def submission_results(sid: str, bench_key: str) -> str:
     return f"submissions/{sid}/results/{bench_key}.jsonl.gz"
 
 
-def submission_model_prefix(sid: str) -> str:
-    return f"submissions/{sid}/model/"
-
-
 def submission_edit_prefix(sid: str) -> str:
     return f"submissions/{sid}/edit/"
 

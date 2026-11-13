@@ -6,7 +6,7 @@ from bittensor_wallet import Keypair
 
 from axonry.common import layout
 from axonry.common.store import ImmutableObjectError, LocalStore
-from axonry.publish import janitor, publisher
+from axonry.publish import publisher
 from axonry_validator import main as v
 
 OWNER = Keypair.create_from_uri("//Alice")
@@ -55,13 +55,6 @@ def test_validator_cycle_keeps_last_valid(tmp_path):
     tampered = {**signed, "weights": [{"uid": 9, "hotkey": None, "weight": 1.0}]}
     w = v.cycle(a, state, sub, None, fetcher=lambda u: tampered, setter=lambda *x: calls.append(x[3]))
     assert w == {3: 1.0} and calls == [{3: 1.0}, {3: 1.0}]
-
-
-def test_janitor_keeps_champions():
-    rows = [{"sid": "a", "decided_at": 0, "model_available": True},
-            {"sid": "b", "decided_at": 0, "model_available": True},
-            {"sid": "c", "decided_at": 10**10, "model_available": True}]
-    assert janitor.due(rows, {"b"}, 30, now=40 * 86400) == ["a"]
 
 
 def test_publish_registry(tmp_path):

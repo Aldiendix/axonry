@@ -20,7 +20,7 @@ BASE_FIELDS = {"schema", "id", "hf_repo", "revision", "files"}
 INITIAL_FIELDS = {"schema", "id", "base", "files", "about"}
 BENCH_FIELDS = {"schema", "id", "version", "adapter", "task", "samples_per_item", "items_manifest_sha256", "judge"}
 RULES_FIELDS = {"schema", "season", "effective_block", "netuid", "base", "benchmarks", "judge", "fee", "run",
-                "competition", "retention", "review"}
+                "competition", "review"}
 
 
 class RegistryError(ValueError):

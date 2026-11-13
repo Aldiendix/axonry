@@ -10,7 +10,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS submissions (
   sid TEXT PRIMARY KEY, season TEXT, hotkey TEXT, coldkey TEXT, status TEXT NOT NULL, reason_code TEXT, reason TEXT,
   content_digest TEXT, record TEXT NOT NULL, created_at REAL, updated_at REAL, decided_at REAL,
-  model_available INTEGER DEFAULT 0, infra_retries INTEGER DEFAULT 0,
+  infra_retries INTEGER DEFAULT 0,
   pr_number INTEGER, head_sha TEXT, prio_block INTEGER, prio_index INTEGER,
   locked_commit TEXT, run_cost INTEGER);
 CREATE UNIQUE INDEX IF NOT EXISTS one_per_hotkey ON submissions(hotkey);

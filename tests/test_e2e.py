@@ -264,12 +264,6 @@ class FakeExecutor:
                     "info": {}, "model_digest": None}
         return {"passed": True, "violations": [], "info": {"tensors": 1}, "model_digest": "md-" + "".join(spec["ops"])}
 
-    def upload_model(self, sid, creds):
-        """The evaluation machine writes the model straight into the public bucket, under the creds' prefix."""
-        data = b"weights of " + sid.encode()
-        self.public.put(creds["prefix"] + "model.safetensors", data)
-        return {"model.safetensors": len(data)}
-
     def evaluate(self, model_id, base_doc, bench_docs, salt):
         self.evaluated.append(model_id)
         return {f"{b['id']}@{b['version']}": self.run_benchmark(model_id, b) for b in bench_docs}
@@ -301,7 +295,6 @@ def make(tmp_path):
                 public=pub, private=priv, owner_keypair=OWNER, comp_rules=COMP_RULES,
                 price_at=lambda ts: (500.0, {"x": 500.0, "y": 500.0}), scan_prs=gh.candidates,
                 clock=clock, work_dir=tmp_path / "work")
-    deps.executor.public = pub
     deps.registry_root = registry_copy(tmp_path, initial_champion=None)
     return Orchestrator(deps), chain, clock, pub
 
@@ -388,8 +381,6 @@ def test_full_flow(tmp_path, capsys):
     assert score["dominates_champion"] and score["wins"] >= 2
     adm = json.loads(pub.get(layout.submission(sid_b, "admission.json")))
     assert not adm["passed"] and "relative change" in adm["violations"][0]
-    assert pub.get(layout.submission_model_prefix(sid_a) + "model.safetensors")
-    assert json.loads(pub.get(layout.submission_model_prefix(sid_a) + "axonry_model.json"))["base"] == "qwen35-0.8b-think"
     import gzip
     row = json.loads(gzip.decompress(pub.get(layout.submission_results(sid_a, "math500@1"))).splitlines()[0])
     assert set(row) == {"id", "k", "correct"}                 # no generated text in public results
@@ -422,12 +413,6 @@ def test_full_flow(tmp_path, capsys):
     orch.db.set("janitor_at", 0)
     orch.janitor()
     assert not list(priv.list("staging/"))
-
-    # retention: 31 days later D's model goes, A's (champion) stays
-    clock.t += 31 * 86400
-    orch.janitor()
-    assert pub.get(layout.submission_model_prefix("0000000104-0002") + "model.safetensors") is None
-    assert pub.get(layout.submission_model_prefix(sid_a) + "model.safetensors")
 
 
 def test_accounts_and_fees(tmp_path):
@@ -689,15 +674,6 @@ def test_our_outages_never_fail_a_ticket(tmp_path):
             raise ExecError("eval host: no answer within 60s")
         return real_admit(*a)
     orch.d.executor.admit = flaky_admit
-    real_upload = orch.d.executor.upload_model
-    upload_outages = {"n": 0}
-
-    def flaky_upload(*a):                       # after admission was published: re-entry must stay consistent
-        upload_outages["n"] += 1
-        if upload_outages["n"] <= 2:
-            raise ExecError("transfer cut")
-        return real_upload(*a)
-    orch.d.executor.upload_model = flaky_upload
     for _ in range(12):
         orch.tick()
         clock.t += 3 * 3600                     # past deadlines and any backoff

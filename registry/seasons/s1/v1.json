@@ -38,9 +38,6 @@
   "z_win": 2.0
  },
  "netuid": 99,
- "retention": {
-  "non_champion_model_days": 30
- },
  "review": {
   "reviewers": [
    "angosr"

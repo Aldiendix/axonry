@@ -115,7 +115,7 @@ def board(status: dict, matches: dict | None, n=20, color=None) -> str:
         label, col = STAGE.get(x["status"], (x["status"].lower(), ""))
         detail = {"RUNNING": f"agent at work until {_ts(x.get('deadline'))} UTC",
                   "QUEUED": f"position {x.get('position', '-')}: waiting for a machine",
-                  "REVIEW": "waiting for the reviewer", "COLLECTING": "run over: model upload and admission",
+                  "REVIEW": "waiting for the reviewer", "COLLECTING": "run over: edit upload and admission",
                   "ADMITTED": "benchmarks on the evaluation machine",
                   "SCORED": "decided once every earlier submission is"}.get(x["status"], "")
         rows.append([str(i), uid(x["hotkey"]), hot(x["hotkey"]), x["sid"], pr(x["pr"], x.get("title")),
