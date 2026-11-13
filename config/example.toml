@@ -1,0 +1,63 @@
+# Copy to config/axonry.toml (never committed). Secrets are never in this file: keys ending in _env name the
+# environment variable that holds the value. Relative paths are relative to the project root.
+
+[chain]
+network = "finney"            # or "test" / a ws:// endpoint
+
+[owner]                       # signs weights.json (the validator pins this hotkey's ss58)
+wallet = "owner"
+hotkey = "default"
+# path = "~/.bittensor/wallets"
+
+[competition]
+github_token_env = "AXONRY_GITHUB_TOKEN"     # contents:write (lock tags axonry/<sid>, champion merge), pull_requests:write
+local_path = "WeightSpaceProgramming"     # git submodule; its commit is the competition version a season pins
+
+[storage]
+backend = "r2"                # "local" for development: local_public / local_private directories
+local_public = ".local/public"
+local_private = ".local/private"
+
+[r2]
+endpoint = "https://ACCOUNT_ID.r2.cloudflarestorage.com"
+account_id = "ACCOUNT_ID"
+public_bucket = "axonry-public"              # served read-only on the public domain
+private_bucket = "axonry-private"
+access_key_id_env = "AXONRY_R2_ACCESS_KEY_ID"        # S3 key = id of an account API token with R2 object read/write
+secret_access_key_env = "AXONRY_R2_SECRET_ACCESS_KEY" #   on the two buckets; secret = sha256(token value)
+temp_parent_access_key_id_env = "AXONRY_R2_ACCESS_KEY_ID"   # parent of the per-run temporary credentials
+cf_api_token_env = "CLOUDFLARE_CONTROL_API_TOKEN"  # account token with "Workers R2 Storage Write" (temp credentials)
+
+[vast]                        # GPU machines rented on vast.ai: one per run (its sandbox), one for evaluation
+api_key_env = "VASTAI_KEY"
+image = "vllm/vllm-openai@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e"   # pinned
+min_cuda = 13.0               # the image is CUDA 13.0: the host driver must support it natively
+ssh_key = "~/.ssh/axonry_vast"  # the orchestrator's key (root on every machine); added to the vast account itself
+max_runs = 16                 # runs holding a machine at once (also <= the arbos accounts' runs)
+disk_gb = 150
+min_reliability = 0.95
+verified_only = false         # also hosts vast has not verified (4 x 4090 supply is thin otherwise)
+min_down_mbps = 200           # a machine must pull a ~20 GB image within setup_minutes
+exclude_countries = ["CN"]    # hosts whose route to PyPI / Hugging Face / R2 is unreliable
+setup_minutes = 45            # a machine not ready by then is destroyed and another one rented
+eval_gpu_name = "RTX 4090"    # the evaluation machine: rented while there is work, released when idle
+eval_gpus = 8
+eval_idle_minutes = 20
+# proxy_command = "nc -X 5 -x 127.0.0.1:1084 %h %p"   # only where this host reaches the internet through a proxy
+
+[eval]
+concurrency_per_gpu = 256      # requests in flight per evaluation GPU (keeps the cards full; results do not depend on it)
+
+[agent]                                   # which agent backend runs the tasks (src/axonry/agent/factory.py)
+runner = "arbos"
+
+[agent.arbos]                             # sign in each account once: python -m axonry.agent.arbos.auth --account NAME url
+bin = "arbosctl"                          # tokens: ~/.config/axonry/arbos/<NAME>/, refreshed automatically
+accounts = [{ name = "main", runs = 6 }]  # each account has one 8-CPU/16-GiB box for all its runs: 4-8 runs each
+# exec_prefix = ["proxychains4", "-q", "-f", "~/.config/axonry/proxychains.conf"]   # only without direct internet
+instructions = "You run weight-editing competition tasks. Follow BRIEF.md exactly; it is authoritative."
+
+[state]
+db = ".state/axonry.sqlite"
+work_dir = ".state/work"
+tick_seconds = 60

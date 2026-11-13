@@ -1,0 +1,61 @@
+{
+ "base": "qwen35-0.8b-think",
+ "benchmarks": [
+  {
+   "key": "math500@1"
+  },
+  {
+   "key": "gsm8k500@1"
+  },
+  {
+   "key": "amc23@1"
+  },
+  {
+   "key": "mmlupro500@1"
+  },
+  {
+   "key": "ifeval@1"
+  }
+ ],
+ "competition": {
+  "commit": "ed4bea8d7c1bd97776981c275b2af597d4beb44d",
+  "repo": "AxOrganization/WeightSpaceProgramming",
+  "rules_sha256": "288643faab2aebf11e3993ac565931e722df39e9812c86bded237e26317da1c0"
+ },
+ "effective_block": 0,
+ "fee": {
+  "assets": [
+   "tao",
+   "alpha"
+  ],
+  "treasury": "5HDnT2yz6pJE2dWvKDvmCoXFJvzHCtecupTHSnMcqSxHLkpG",
+  "usd_per_gpu_hour": 2
+ },
+ "initial_champion": "loop-ablation",
+ "judge": {
+  "n_win": 2,
+  "z_tie": 2.0,
+  "z_win": 2.0
+ },
+ "netuid": 99,
+ "retention": {
+  "non_champion_model_days": 30
+ },
+ "review": {
+  "reviewers": [
+   "angosr"
+  ]
+ },
+ "run": {
+  "gpu_model": "RTX 4090",
+  "gpus": 4,
+  "hours": 8,
+  "max_agent_usd": 50,
+  "max_job_failures": 2,
+  "stall_minutes": 20,
+  "upload_grace_minutes": 30,
+  "wrap_minutes": 30
+ },
+ "schema": "axonry.rules/1",
+ "season": "s1"
+}

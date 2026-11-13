@@ -1,0 +1,140 @@
+"""Everything the agent must know, generated: BRIEF.md for reading and task.json["limits"] for tools.
+
+Sources, never hand-written: the resources probed in the sandbox, the run's clock, the competition repo's
+rules.json (edit limits) and the subnet rules version (time, upload protocol). Change a rule and the brief follows.
+"""
+import json
+import time
+
+
+def limits_from(comp_rules: dict) -> dict:
+    """The subset of the competition protocol (WeightSpaceProgramming rules.json, section "edit") that binds this run."""
+    from ..evaluation.admit_remote import edit_limits  # noqa: PLC0415
+    e = comp_rules["edit"]
+    t = edit_limits(comp_rules)
+    return {
+        "editable_tensors": e["editable_tensors"],
+        "ops_allowed": e["ops"],
+        "payload": e["payload"],
+        "relative_change": e["relative_change"],
+        "max_payload_bytes": t["max_payload_bytes"],
+        "max_relative_change_per_tensor": t["max_relative_change_per_tensor"],
+        "max_global_relative_change": t["max_global_relative_change"],
+        "upload_files": comp_rules["upload"]["files"],
+        "no_overfitting": e["no_overfitting"],
+    }
+
+
+def _fmt_ts(ts):
+    return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(ts))
+
+
+def render(task: dict) -> str:
+    lim, res, run = task["limits"], task["sandbox"]["resources"], task["run"]
+    budget = (f"\n- Your agent budget: {run['max_agent_usd']} USD for model use; at 80% you are asked to upload, at 100% the "
+              "run stops." if run.get("max_agent_usd") else "")
+    gpus = ", ".join(f"{g['name']} ({g['memory_gib']} GiB)" for g in res.get("gpus", [])) or "none detected"
+    return f"""# Task brief — submission {task['sid']}
+
+This brief is generated from the competition rules; it is the authoritative list of what you have and what you may
+do. Your method is in `submission/METHOD.md` (written by the miner); follow it within these limits.
+
+## Goal
+Improve base model `{task['base']}` on the benchmarks by **editing its weights directly** (method guide: the
+toolkit's weight-edit skill: `.claude/skills/weight-edit/` (Claude-style agents) or `.agents/skills/weight-edit/`
+(Codex), same content, under `/workspace/WeightSpaceProgramming/`; toolkit README alongside), producing an edit spec
+(`edit.json` + `edit.npz`, with the `derive/` code that computes it) that the organizer applies to the official
+base weights. You do not upload weights. Benchmarks are not available to you; use the practice data only.
+
+## Time
+- Start: {_fmt_ts(run['start'])}
+- **Deadline: {_fmt_ts(run['deadline'])}** ({(run['deadline'] - run['start']) // 3600} h). Anything uploaded later is ignored.
+- Wrap-up reminder at {_fmt_ts(run['deadline'] - run['wrap_minutes'] * 60)}. `axonry-time` in the sandbox prints the time left.
+- One background job of yours lasts at most 60 minutes; you are then asked to continue from PROGRESS.md. Run long GPU
+  work detached in the sandbox (`tmux` or `nohup`), so it keeps running when a job ends, and check on it later.{budget}
+- Upload an intermediate result early and re-upload improvements: the last complete upload before the deadline counts.
+
+## Machine (one sandbox, exclusive to you until the deadline)
+- Connect once with `bash ssh/install.sh` (from this bundle), then always `ssh -F ~/.axonry/ssh/config sandbox`
+  (also `scp -F ~/.axonry/ssh/config file sandbox:/workspace/work/`, `rsync -e "ssh -F ~/.axonry/ssh/config"`).
+  Host keys are pinned; use `tmux` inside the sandbox for long jobs so a dropped connection does not kill them.
+- GPU: {gpus}; CPUs: {res.get('cpus')}; memory: {res.get('memory')}; free disk: {res.get('disk_gib')} GiB.
+- Base model (read-only): `{res.get('base_path')}`; competition toolkit (read-only): `{res.get('competition_repo')}`;
+  your writable space: `{res.get('work_path')}`.
+- Network: {res.get('network')}. Never download models, weights or benchmark data: everything you need is already
+  there, and your public agent log shows every command.
+- On your own (agent) machine, work only inside your workspace folder: do not use `/tmp`, `/dev/shm` or any other
+  directory outside it.
+- The sandbox is destroyed at the deadline.
+
+## Rules for the edit (violations are rejected before evaluation, with the reason published)
+- Editable: {lim['editable_tensors']}
+- Ops: {', '.join(lim['ops_allowed'])} (declarative, applied to the official base weights).
+- Payload (arrays in the spec) at most {lim['max_payload_bytes']} bytes; any number of tensors.
+- Relative change at most {lim['max_relative_change_per_tensor']} per tensor and {lim['max_global_relative_change']} over all editable matrices.
+- Payload: {lim['payload']}.
+- Relative change: {lim['relative_change']}.
+- No overfitting: {lim['no_overfitting']}
+- Practice data (GSM8K / MATH train) ships with the toolkit (`practice:` sets in wsp.data); benchmark sets are not here.
+- Self-check before uploading: `axonry-check <dir with edit.json, edit.npz, REPORT.md>` runs exactly the organizer's
+  admission check (same code).
+
+## Upload (protocol {task['upload_protocol']}, defined in the toolkit's rules.json)
+1. `python -m wsp.upload <case> <edit> --task task.json [--derive DIR]` (in the sandbox: copy task.json there first)
+   packages the case's edit and report and uploads the files, then `manifest.json`, to `{task['r2']['prefix']}`
+   with the temporary credentials in `task.json` (they expire at the deadline). Cases live in `$WSP_CASES`.
+2. Files: {', '.join(lim['upload_files'])}; `edit.json` must have `"base": "{task['base']}"`.
+3. `REPORT.md`: what failure you targeted, how the spec was derived, controls, what did not work.
+
+## Progress
+Keep `PROGRESS.md` in your workspace up to date (every ~30 min): what is done, what is next. When a turn ends
+before the deadline you will be asked to continue from it.
+"""
+
+
+def ssh_files(task: dict) -> dict:
+    """ssh/ of the bundle: key, pinned known_hosts and a config -> `ssh -F ~/.axonry/ssh/config sandbox`."""
+    sb = task["sandbox"]
+    d = "@AXONRY_SSH_DIR@"   # install.sh writes the absolute path ($HOME/.axonry/ssh): no reliance on ssh's %d / ~
+    config = (f"# sandbox of submission {task['sid']}, valid until the deadline\n"
+              f"Host sandbox\n  HostName {sb['host']}\n  Port {sb['port']}\n  User {sb['user']}\n"
+              f"  HostKeyAlias sandbox\n  IdentityFile {d}/id_sandbox\n  IdentitiesOnly yes\n"
+              f"  UserKnownHostsFile {d}/known_hosts\n  StrictHostKeyChecking yes\n  ServerAliveInterval 30\n")
+    install = ("#!/bin/sh\n# install this run's ssh access: ssh -F ~/.axonry/ssh/config sandbox\nset -e\numask 077\n"
+               'here=$(cd "$(dirname "$0")" && pwd)\nmkdir -p ~/.axonry/ssh && chmod 700 ~/.axonry ~/.axonry/ssh\n'
+               'cp "$here/known_hosts" "$here/id_sandbox" ~/.axonry/ssh/\n'
+               'sed "s#@AXONRY_SSH_DIR@#$HOME/.axonry/ssh#g" "$here/config" > ~/.axonry/ssh/config\nchmod 600 ~/.axonry/ssh/*\n'
+               "ssh -F ~/.axonry/ssh/config sandbox true && echo 'sandbox reachable: ssh -F ~/.axonry/ssh/config sandbox'\n")
+    key = sb["private_key"] if sb["private_key"].endswith("\n") else sb["private_key"] + "\n"
+    return {"config": config.encode(), "known_hosts": f"sandbox {sb['host_key']}\n".encode(),
+            "install.sh": install.encode(), "id_sandbox": key.encode()}
+
+
+def kickoff_message(bundle_name: str) -> str:
+    return (f"The attached {bundle_name} contains task.json, "
+            "BRIEF.md and submission/. Unpack it, read BRIEF.md first (it is authoritative), then "
+            "submission/METHOD.md, and carry out the method on the GPU sandbox described in task.json. Upload results "
+            "as BRIEF.md says; upload an early result and improve it. Keep PROGRESS.md current.")
+
+
+def continue_message(task: dict, now: int) -> str:
+    left = max(task["run"]["deadline"] - now, 0)
+    return (f"Continue the task (submission {task['sid']}) from PROGRESS.md. Time left: "
+            f"{left // 3600} h {left % 3600 // 60} min until {_fmt_ts(task['run']['deadline'])}. "
+            "Re-read BRIEF.md if needed; make sure a complete result is uploaded before the deadline.")
+
+
+def wrap_message(task: dict, now: int) -> str:
+    left = max(task["run"]["deadline"] - now, 0)
+    return (f"{left // 60} minutes left. Stop exploring: run axonry-check on your best result and upload it now "
+            "(python -m wsp.upload ... --task task.json), with an up-to-date REPORT.md.")
+
+
+def budget_message(task: dict, usd: float) -> str:
+    return (f"This run's agent has used {usd:.2f} of its {task['run']['max_agent_usd']} USD. Stop exploring: run "
+            "axonry-check on your best result and upload it now (python -m wsp.upload ... --task task.json); the run "
+            "stops when the budget is used up.")
+
+
+def task_json(task: dict) -> bytes:
+    return json.dumps(task, indent=1, sort_keys=True).encode()

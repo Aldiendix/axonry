@@ -1,0 +1,13 @@
+{
+ "adapter": "wsp",
+ "id": "mmlupro500",
+ "items_manifest_sha256": "2c112df92700fab6edbf387167fdc78b27424f03309480866ec2c2916d1be885",
+ "judge": {
+  "delta_win": 1.5,
+  "eps_tie": 1.0
+ },
+ "samples_per_item": 4,
+ "schema": "axonry.benchmark/1",
+ "task": "bench:mmlupro500",
+ "version": 1
+}

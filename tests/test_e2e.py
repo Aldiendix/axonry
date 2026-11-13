@@ -1,0 +1,912 @@
+"""Whole flow against fakes: deposit + commitment + PR -> run charged by the hour -> review -> sandbox + temp creds -> agent run -> upload -> admission ->
+benchmarks -> decision -> public files + signed weights, and the miner CLI reading them back."""
+import json
+import random
+from axonry import pricing, registry
+
+from bittensor_wallet import Keypair
+
+from axonry.chain.extrinsics import Commitment, Deposit
+from axonry.common import layout
+from axonry.common.digest import content_digest_of_blobs
+from axonry.common.store import LocalStore
+from axonry.creds import TempCreds
+from axonry.common.canon import sha256_hex
+from axonry.intake.github import PRCandidate
+from axonry.miner import cli as miner
+from axonry.orchestrator.db import DB
+from axonry.orchestrator.service import Deps, Orchestrator
+from axonry.pool.vast import Machine
+from axonry_validator import main as validator
+
+OWNER = Keypair.create_from_uri("//Alice")
+TREASURY = Keypair.create_from_uri("//Treasury").ss58_address
+NETUID = 99
+HOTKEYS = {n: Keypair.create_from_uri(f"//hk{n}").ss58_address for n in "ABCD"}
+COLDKEYS = {n: Keypair.create_from_uri(f"//ck{n}").ss58_address for n in "ABCD"}
+UIDS = {HOTKEYS[n]: i + 1 for i, n in enumerate("ABCD")}
+COMP_RULES = json.load(open(__file__.rsplit("/", 2)[0] + "/WeightSpaceProgramming/rules.json"))
+
+# what each miner's agent will produce: quality = share of extra items answered right; spec = edit.json content
+PLANS = {"A": {"quality": 0.25, "spec": {"base": "qwen35-0.8b-think", "ops": ["a"]}},
+         "B": {"quality": 0.9, "spec": {"base": "qwen35-0.8b-think", "ops": ["too_big"]}},
+         "C": {"quality": 0.25, "spec": {"base": "qwen35-0.8b-think", "ops": ["a"]}},   # same weights as A
+         "D": {"quality": 0.27, "spec": {"base": "qwen35-0.8b-think", "ops": ["d"]}},  # not better than A
+         "E": {"quality": 0.5, "spec": {"base": "qwen35-0.8b-think", "ops": ["e"]}},   # stacks on A, beats it
+         "P": {"quality": 0.25, "spec": {"base": "qwen35-0.8b-think", "ops": ["paper"]}}}   # an initial champion
+HOTKEYS["E"] = Keypair.create_from_uri("//hkE").ss58_address
+COLDKEYS["E"] = Keypair.create_from_uri("//ckE").ss58_address
+UIDS[HOTKEYS["E"]] = 5
+HOTKEYS["F"] = Keypair.create_from_uri("//hkF").ss58_address          # registered and funded, never commits
+COLDKEYS["F"] = Keypair.create_from_uri("//ckF").ss58_address
+UIDS[HOTKEYS["F"]] = 6
+
+
+
+def make_manifest(out_dir):
+    """The upload manifest exactly as the competition toolkit's wsp.upload writes it."""
+    files = [{"path": "edit/" + p.relative_to(out_dir).as_posix(), "size": p.stat().st_size,
+              "sha256": sha256_hex(p.read_bytes())} for p in sorted(out_dir.rglob("*")) if p.is_file()]
+    return {"schema": COMP_RULES["upload"]["schema"], "files": files}
+
+
+class Clock:
+    t = 1_800_000_000
+
+    def __call__(self):
+        return self.t
+
+
+class FakeChain:
+    def __init__(self):
+        self.head, self.blocks = 100, {}
+
+    def finalized_head(self):
+        return self.head
+
+    def items_in_block(self, b, treasury, netuid):
+        return self.blocks.get(b, [])
+
+    def owner_of(self, hk, block):
+        return next(COLDKEYS[n] for n, h in HOTKEYS.items() if h == hk)
+
+    def uid_of(self, hk, netuid, block=None):
+        return UIDS.get(hk)
+
+    def uid_hotkeys(self, netuid, block=None):
+        return {u: h for h, u in UIDS.items()}
+
+    def alpha_price(self, netuid, block):
+        return 0.01
+
+
+def blobs_for(n, parent=None):
+    return {"entry.json": json.dumps({"schema": "axonry.entry/1", "base": "qwen35-0.8b-think",
+                                      "parent": parent}).encode(),
+            "METHOD.md": f"method of {n}".encode()}
+
+
+USER_IDS = {"u": 1, "mallory": 666}       # GitHub login -> numeric id
+
+
+class FakeGitHub:
+    """PRs with a moving head; commits map to submission directory contents."""
+    repo = "owner/WeightSpaceProgramming"
+
+    def __init__(self):
+        self.commits, self.prs, self.tags, self.merged, self.comments = {}, {}, {}, [], []
+        self.approve_all, self.verdicts = True, {}      # (PR, content digest) -> "approved" | "changes"
+
+    def add_pr(self, number, hotkey, commit, blobs):
+        self.commits[commit] = blobs
+        self.prs[number] = {"number": number, "state": "open", "head_sha": commit, "mergeable": True,
+                            "author": "u", "merged": False, "dir": f"submissions/{hotkey}/e1/"}
+
+    def push(self, number, commit, blobs):
+        self.commits[commit] = blobs
+        self.prs[number]["head_sha"] = commit
+
+    def pr(self, number):
+        p = self.prs[number]
+        return {**{k: v for k, v in p.items() if k != "dir"}, "author_id": p.get("author_id", USER_IDS[p["author"]])}
+
+    def pr_files(self, number):
+        d = self.prs[number]["dir"]
+        return [d + rel for rel in self.commits[self.prs[number]["head_sha"]]]
+
+    def dir_blobs(self, commit, directory):
+        return dict(self.commits[commit])
+
+    def review_state(self, number, digest, directory, reviewers):
+        if (number, digest) in self.verdicts:          # reviews live on a PR, like GitHub's
+            return self.verdicts[(number, digest)], "reviewer note"
+        return ("approved", None) if self.approve_all else (None, None)
+
+    def lock_tag(self, sid, commit):
+        assert self.tags.get(sid, commit) == commit
+        self.tags[sid] = commit
+
+    def merge(self, commit, title):
+        assert commit in self.tags.values(), "only a locked commit is merged"
+        self.merged.append(int(title.rsplit("#", 1)[1].rstrip(")")))
+
+    def comment(self, number, text):
+        self.comments.append((number, text))
+
+    def candidates(self):
+        """What intake.github.scan reports: open PRs and the content digest at their head."""
+        out = []
+        for n, p in self.prs.items():
+            if p["state"] == "open":
+                hk = p["dir"].split("/")[1]
+                out.append(PRCandidate(n, p["author"], hk, "e1", p["dir"], None, p["head_sha"],
+                                       content_digest_of_blobs(self.commits[p["head_sha"]]), p.get("title", ""),
+                                       self.pr(n)["author_id"]))
+        return out
+
+
+class FakeFleet:
+    """Rented machines, ready at once; `lose` makes vast drop one."""
+    def __init__(self, db):
+        self.db, self.lost, self.released = db, set(), []
+
+    def get(self, purpose):
+        return next((m for m in self.db.machines() if m["name"] == purpose), None)
+
+    def active(self):
+        return self.db.machines()
+
+    def rent(self, purpose, gpu_name, gpus):
+        self.db.add_machine(purpose, f"i-{purpose}-{len(self.released)}", "m1", gpu_name, gpus, 3.0, 0)
+        self.db.set_machine(purpose, state="ready", ssh_host="203.0.113.7", ssh_port=40100)
+
+    def advance(self, purpose):
+        return self.get(purpose)["state"] if self.get(purpose) else "gone"
+
+    def release(self, purpose, note="released"):
+        if self.get(purpose):
+            self.db.set_machine(purpose, state="gone", note=note)
+            self.released.append(purpose)
+            self.lost.discard(purpose)
+
+    def machine(self, row):
+        return Machine(row["name"], row["ssh_host"], row["ssh_port"], "/dev/null")
+
+    def hand_over(self, purpose, public_key, deadline):
+        m = Machine(purpose, "203.0.113.7", 40100, "/dev/null", None, "agent")
+        m.host_key = lambda: "ssh-ed25519 SANDBOXKEY"
+        return m
+
+    def probe(self, purpose):
+        return {"gpus": [{"name": "NVIDIA GeForce RTX 4090", "memory_gib": 24}] * 8, "cpus": 64, "memory": "500g",
+                "disk_gib": 200, "network": "open (no allowlist)", "base_path": "/workspace/base",
+                "work_path": "/workspace/work", "competition_repo": "/workspace/WeightSpaceProgramming"}
+
+    def vanished(self, purpose):
+        return purpose in self.lost
+
+
+class FakeRunner:
+    name = "fake"
+    """The 'agent': on kickoff it uploads its plan's edit spec through the staging protocol."""
+
+    def __init__(self, private, tmp):
+        self.private, self.tmp, self.kicked, self.saw_parent, self.methods = private, tmp, [], {}, {}
+
+    capacity = 6
+
+    def prepare(self, sid, hotkey, busy=()):
+        from axonry.agent.base import RunHandle
+        return RunHandle(sid, f"axonry-{hotkey[:12].lower()}", f"chat-{sid}")
+
+    def kickoff(self, h, message, bundle):
+        import tarfile
+        with tarfile.open(bundle) as tf:
+            task = json.load(tf.extractfile("task.json"))
+            assert "Deadline" in tf.extractfile("BRIEF.md").read().decode()
+            cfg = tf.extractfile("ssh/config").read().decode()
+            assert "HostName 203.0.113.7" in cfg and "Port 40100" in cfg and "User agent" in cfg
+            assert tf.extractfile("ssh/known_hosts").read().decode() == "sandbox ssh-ed25519 SANDBOXKEY\n"
+            method = tf.extractfile("submission/METHOD.md").read().decode()
+            parent_files = {m.name[len("parent/edit/"):]: tf.extractfile(m).read() for m in tf.getmembers()
+                            if m.name.startswith("parent/edit/")}
+        n = method.split()[-1]
+        self.methods[h.sid] = method
+        self.saw_parent[h.sid] = bool(parent_files)
+        out = self.tmp / h.sid
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "edit.json").write_text(json.dumps(PLANS[n]["spec"]))
+        (out / "REPORT.md").write_text(f"plan {n}")
+        if parent_files:                                 # stacking: the spec names the chain, which is not uploaded
+            spec = {**PLANS[n]["spec"], "parent": "parent/edit.json"}
+            (out / "edit.json").write_text(json.dumps(spec))
+        man = make_manifest(out)
+        for f in man["files"]:
+            self.private.put(task["r2"]["prefix"] + f["path"], (out / f["path"][5:]).read_bytes())
+        self.private.put(task["r2"]["prefix"] + "manifest.json", json.dumps(man).encode())
+        self.kicked.append(h.sid)
+
+    def poll(self, h):
+        from axonry.agent.base import RunStatus
+        return RunStatus(False, Clock.t)
+
+    def steer(self, h, m):
+        pass
+
+    def reject(self, h, a, r):
+        pass
+
+    def stop(self, h):
+        pass
+
+    def export(self, h, dest):
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / "chat.json").write_text(json.dumps({"messages": [{"role": "user", "text": "go"}]}))
+        return True
+
+
+class FakeExecutor:
+    def __init__(self, tmp):
+        self.tmp, self.specs, self.evaluated = tmp, {}, []
+
+    def ready(self):
+        return True
+
+    def admit(self, sid, spec_dir, base_doc):
+        spec = json.loads((spec_dir / "edit.json").read_text())
+        spec.pop("parent", None)
+        self.specs[sid] = spec
+        if "too_big" in spec["ops"]:
+            return {"passed": False, "violations": ["layers.3.mlp.down_proj.weight: relative change 0.312 > 0.25"],
+                    "info": {}, "model_digest": None}
+        return {"passed": True, "violations": [], "info": {"tensors": 1}, "model_digest": "md-" + "".join(spec["ops"])}
+
+    def upload_model(self, sid, creds):
+        """The evaluation machine writes the model straight into the public bucket, under the creds' prefix."""
+        data = b"weights of " + sid.encode()
+        self.public.put(creds["prefix"] + "model.safetensors", data)
+        return {"model.safetensors": len(data)}
+
+    def evaluate(self, model_id, base_doc, bench_docs, salt):
+        self.evaluated.append(model_id)
+        return {f"{b['id']}@{b['version']}": self.run_benchmark(model_id, b) for b in bench_docs}
+
+    def run_benchmark(self, model_id, bench_doc):
+        q = 0.0 if model_id.startswith("base:") else next(
+            p["quality"] for p in PLANS.values() if p["spec"] == self.specs[model_id])
+        rng = random.Random(f"{bench_doc['id']}")      # same items/seeds for every model (paired)
+        rows = []
+        for i in range(300):
+            base_ok = rng.random() < 0.4
+            extra = (i % 100) < q * 100
+            for k in range(4):
+                rows.append({"id": f"{bench_doc['id']}-{i}", "k": k, "correct": base_ok or extra})
+        return "\n".join(json.dumps(r) for r in rows).encode()
+
+
+def make(tmp_path):
+    clock = Clock()
+    pub, priv = LocalStore(tmp_path / "public", public=True), LocalStore(tmp_path / "private")
+    chain = FakeChain()
+    gh = FakeGitHub()
+    db = DB(tmp_path / "db.sqlite")
+    deps = Deps(db=db, chain=chain, github=gh, fleet=FakeFleet(db),
+                issue_creds=lambda store, prefix, ttl: TempCreds("https://r2", "axonry-private", prefix,
+                                                                 "AK", "SK", "ST",
+                                                               clock() + ttl),
+                runner=FakeRunner(priv, tmp_path / "agents"), executor=FakeExecutor(tmp_path),
+                public=pub, private=priv, owner_keypair=OWNER, comp_rules=COMP_RULES,
+                price_at=lambda ts: (500.0, {"x": 500.0, "y": 500.0}), scan_prs=gh.candidates,
+                clock=clock, work_dir=tmp_path / "work")
+    deps.executor.public = pub
+    deps.registry_root = registry_copy(tmp_path, initial_champion=None)
+    return Orchestrator(deps), chain, clock, pub
+
+
+def registry_copy(tmp_path, **rules_patch):
+    """The repo's registry with the current season's rules patched (None removes a key)."""
+    import shutil
+    from axonry.common.canon import write_json
+    root = tmp_path / "registry"
+    if not root.exists():
+        shutil.copytree(registry.ROOT, root)
+    rules_file = next((root / "seasons" / "s1").glob("*.json"))
+    doc = {**json.loads(rules_file.read_text()), **rules_patch}
+    write_json(rules_file, {k: v for k, v in doc.items() if v is not None})
+    return root
+
+
+RULES = registry.load_rules_versions("s1")[-1]
+RUN_USD = pricing.run_cost_musd(RULES) / pricing.MUSD
+HOUR = pricing.hour_musd(RULES)                  # micro-USD of one hour of a run
+FEE = RUN_USD * pricing.RAO // 500 + 1          # rao of TAO covering one whole run at 500 USD/TAO
+
+
+def deposit(chain, n, block, amount=FEE, asset="tao"):
+    chain.blocks.setdefault(block, []).append(Deposit(block, 0, COLDKEYS[n], asset, amount, Clock.t))
+
+
+def pay(orch, chain, n, block, idx, parent=None, blobs=None):
+    """A miner's whole submission: a deposit covering one fee, the content committed, the PR opened."""
+    blobs = blobs or blobs_for(n, parent)
+    deposit(chain, n, block)
+    commit(chain, n, blobs, block, idx)
+    number = len(orch.d.github.prs) + 1
+    orch.d.github.add_pr(number, HOTKEYS[n], f"commit{n}{number}", blobs)
+    return number
+
+
+def commit(chain, n, blobs, block, idx=1, github_id=1):
+    """Content committed on chain by n's hotkey (set_commitment: before every push)."""
+    chain.blocks.setdefault(block, []).append(
+        Commitment(block, idx, HOTKEYS[n], content_digest_of_blobs(blobs), github_id, Clock.t))
+
+
+def run_until_quiet(orch, clock, rounds=12):
+    for _ in range(rounds):
+        orch.tick()
+        clock.t += 9 * 3600     # past every deadline + grace
+
+
+def test_full_flow(tmp_path, capsys):
+    orch, chain, clock, pub = make(tmp_path)
+    orch.bootstrap()
+    w0 = json.loads(pub.get(layout.WEIGHTS))
+    assert w0["weights"] == [{"uid": 0, "hotkey": None, "weight": 1.0}]   # no champion yet: burn
+
+    for i, n in enumerate("ABCD"):
+        pay(orch, chain, n, 101 + i, 2)
+    chain.head = 110
+    orch.intake(start_block=101)
+    assert [s["status"] for s in orch.db.subs()] == ["QUEUED"] * 4   # committed + approved
+
+    run_until_quiet(orch, clock)
+    st = {s["hotkey"]: (s["status"], s["reason_code"]) for s in orch.db.subs()}
+    assert st[HOTKEYS["A"]] == ("PUBLISHED", "NEW_CHAMPION")
+    assert st[HOTKEYS["B"]] == ("REJECTED", "REJECTED_RULES")
+    assert st[HOTKEYS["C"]] == ("PUBLISHED", "NOT_DOMINATING")   # same weights as A, decided after A
+    assert st[HOTKEYS["D"]] == ("PUBLISHED", "NOT_DOMINATING")
+
+    w = json.loads(pub.get(layout.WEIGHTS))
+    assert w["weights"] == [{"uid": UIDS[HOTKEYS["A"]], "hotkey": HOTKEYS["A"], "weight": 1.0}]
+    assert validator.check(w, OWNER.ss58_address, NETUID, 0) is None
+    assert validator.resolve(w, {UIDS[HOTKEYS["A"]]: HOTKEYS["A"]}) == {UIDS[HOTKEYS["A"]]: 1.0}
+
+    sid_a, sid_b = "0000000101-0002", "0000000102-0002"
+    score = json.loads(pub.get(layout.submission(sid_a, "score.json")))
+    assert score["dominates_champion"] and score["wins"] >= 2
+    adm = json.loads(pub.get(layout.submission(sid_b, "admission.json")))
+    assert not adm["passed"] and "relative change" in adm["violations"][0]
+    assert pub.get(layout.submission_model_prefix(sid_a) + "model.safetensors")
+    assert json.loads(pub.get(layout.submission_model_prefix(sid_a) + "axonry_model.json"))["base"] == "qwen35-0.8b-think"
+    import gzip
+    row = json.loads(gzip.decompress(pub.get(layout.submission_results(sid_a, "math500@1"))).splitlines()[0])
+    assert set(row) == {"id", "k", "correct"}                 # no generated text in public results
+    assert pub.get(layout.submission_agent_prefix(sid_a) + "chat.json")
+    assert pub.get(layout.submission_edit_prefix(sid_a) + "edit.json")
+    sub_b = json.loads(pub.get(layout.submission(sid_b, "submission.json")))
+    assert sub_b["status"] == "REJECTED" and sub_b["reason_code"] == "REJECTED_RULES"
+
+    gh = orch.d.github
+    assert set(gh.tags) == {sid_a, "0000000104-0002", sid_b, "0000000103-0002"}   # every run was locked
+    assert gh.merged == [1]                                   # only the champion's PR is merged
+    assert {n for n, _ in gh.comments} == {1, 3, 4}           # decided PRs get a result comment
+
+    # the miner CLI reads the same public files (no keys)
+    reader = miner.PublicReader(store=pub)
+    miner.cmd_matches(reader, season="s1", hotkey=None, status=None)
+    out = capsys.readouterr().out
+    assert sid_b in out and "REJECTED_RULES" in out and "NEW_CHAMPION" in out
+    miner.cmd_show(reader, sid_b)
+    out = capsys.readouterr().out
+    assert "relative change 0.312 > 0.25" in out
+    miner.cmd_show(reader, sid_a)
+    assert "win" in capsys.readouterr().out
+
+    # nothing secret at rest, nothing left in the private bucket once tickets are finished
+    task = orch.db.run(sid_a)["task"]
+    assert "private_key" not in task["sandbox"] and "secret_access_key" not in task["r2"]
+    priv = orch.d.private
+    assert not list(priv.list("tasks/"))
+    orch.db.set("janitor_at", 0)
+    orch.janitor()
+    assert not list(priv.list("staging/"))
+
+    # retention: 31 days later D's model goes, A's (champion) stays
+    clock.t += 31 * 86400
+    orch.janitor()
+    assert pub.get(layout.submission_model_prefix("0000000104-0002") + "model.safetensors") is None
+    assert pub.get(layout.submission_model_prefix(sid_a) + "model.safetensors")
+
+
+def test_accounts_and_fees(tmp_path):
+    """Deposits of any size, at any time, accumulate in the account of the coldkey that sent them, each in USD at the
+    price of its own block. An entry is reviewed only when the account of the coldkey owning the hotkey covers a whole
+    run (hours x GPUs x the GPU-hour price); nothing is charged before the run. The run is charged each full hour and settled when
+    it ends (here: an early finish after 2.5 h, which also frees the GPU at once)."""
+    orch, chain, clock, pub = make(tmp_path)
+    gh = orch.d.github
+    gh.approve_all = False
+    v1 = blobs_for("A")
+    commit(chain, "A", v1, 101)
+    deposit(chain, "A", 101, FEE // 2)
+    deposit(chain, "B", 100, 3 * FEE)                  # another coldkey's money never pays for A's hotkey
+    gh.add_pr(1, HOTKEYS["A"], "a1", v1)
+    chain.head = 101
+    orch.intake(start_block=100)
+    sid, ck = "0000000101-0001", COLDKEYS["A"]
+    s = orch.db.sub(sid)
+    assert (s["status"], s["reason_code"], s["reason"]) == ("WAITING", "INSUFFICIENT_FUNDS", "insufficient funds")
+    assert abs(orch.db.accounts()[ck]["balance_usd"] - RUN_USD / 2) < 0.01
+
+    orch.d.price_at = lambda ts: (1000.0, {"x": 1000.0, "y": 1000.0})    # TAO doubles: only later deposits gain
+    deposit(chain, "A", 130, FEE // 2)
+    chain.head = 130
+    orch.intake()
+    a = orch.db.accounts()[ck]
+    assert orch.db.sub(sid)["status"] == "REVIEW" and abs(a["balance_usd"] - 1.5 * RUN_USD) < 0.01 and a["charged_usd"] == 0
+    gh.verdicts[(1, content_digest_of_blobs(v1))] = "approved"
+    orch.intake()
+    s = orch.db.sub(sid)
+    a = orch.db.accounts()[ck]
+    assert s["status"] == "QUEUED" and s["coldkey"] == ck and s["record"]["fee"]["max_usd"] == RUN_USD
+    assert a["charged_usd"] == 0 and a["held_usd"] == RUN_USD and abs(a["available_usd"] - RUN_USD / 2) < 0.01
+
+    orch.schedule()
+    kick = clock.t
+    clock.t = kick + int(2.5 * 3600)
+    orch.supervise()
+    assert orch.db.charged(sid) == {1: HOUR, 2: HOUR}                               # each full hour
+    assert orch.db.accounts()[ck]["held_usd"] == RUN_USD - 2 * HOUR / pricing.MUSD
+    for _ in range(2):                                  # idle with a complete upload: two continues, then done
+        clock.t += 300
+        orch.supervise()
+    s = orch.db.sub(sid)
+    used = pricing.used_musd(RULES, clock.t - kick)
+    assert s["status"] == "COLLECTING" and s["record"]["agent_outcome"] == "finished"
+    assert orch.d.fleet.get(sid) is None and sid in orch.d.fleet.released           # the machine is released
+    assert sum(orch.db.charged(sid).values()) == used and s["record"]["fee"]["charged_usd"] == used / 1e6
+    a = orch.db.accounts()[ck]
+    assert a["held_usd"] == 0 and abs(a["balance_usd"] - (1.5 * RUN_USD - used / 1e6)) < 0.01
+    orch.supervise()                                    # charged once, however often it looks again
+    assert sum(orch.db.charged(sid).values()) == used
+    orch.db.set("status_at", 0)
+    orch.publish_status()
+    assert json.loads(pub.get(layout.STATUS))["accounts"][ck]["charged_usd"] == used / 1e6
+
+
+def test_one_registration_one_entry(tmp_path):
+    """Only a hotkey's first commitment counts: a later one (before or after its run) is void, its PRs carry
+    nothing, and nothing more is ever charged."""
+    orch, chain, clock, pub = make(tmp_path)
+    orch.bootstrap()
+    gh = orch.d.github
+    v1, v2 = blobs_for("A"), blobs_for("A") | {"METHOD.md": b"second method of A"}
+    deposit(chain, "A", 101, 3 * FEE)
+    commit(chain, "A", v1, 101)
+    commit(chain, "A", v2, 102)                         # a second commitment while the first waits: void
+    gh.add_pr(1, HOTKEYS["A"], "a2", v2)
+    chain.head = 102
+    orch.intake(start_block=101)
+    (s,) = orch.db.subs()
+    assert s["sid"] == "0000000101-0001" and s["status"] == "WAITING" and s["reason_code"] == "NO_PR"
+    assert orch.db.get("prs")["1"]["reason_code"] == "UNCOMMITTED" and "not the committed" in orch.db.get("prs")["1"]["reason"]
+    gh.push(1, "a1", v1)                                # the PR now carries the committed content
+    orch.intake()
+    run_until_quiet(orch, clock)
+    assert orch.db.sub(s["sid"])["status"] == "PUBLISHED"
+    commit(chain, "A", v2, 200)                         # after the run: still void
+    gh.add_pr(2, HOTKEYS["A"], "a3", v2)
+    chain.head = 200
+    orch.intake()
+    run_until_quiet(orch, clock)
+    assert len(orch.db.subs()) == 1 and orch.db.get("prs")["2"]["reason_code"] == "PARTICIPATED"
+    assert "1" not in orch.db.get("prs")                # its own PR is shown with the submission, not again
+    assert orch.db.accounts()[COLDKEYS["A"]]["charged_usd"] == RUN_USD             # one run, to its deadline
+
+
+def test_copy_cannot_overtake_the_original(tmp_path):
+    """B copies A's method, slightly altered (an exact copy cannot even enter: A's commitment owns that digest), after
+    A committed it. B is reviewed and runs first, but decisions follow the chain order of the commitments: A is
+    decided first and becomes champion; B, judged against A, cannot dominate."""
+    orch, chain, clock, pub = make(tmp_path)
+    gh = orch.d.github
+    gh.approve_all = False
+    copy = {"entry.json": blobs_for("B")["entry.json"], "METHOD.md": b"reworded method of A"}
+    na = pay(orch, chain, "A", 101, 1)
+    nb = pay(orch, chain, "B", 105, 1, blobs=copy)
+    chain.head = 105
+    orch.intake(start_block=101)
+    sa, sb = "0000000101-0001", "0000000105-0001"
+    gh.verdicts[(nb, content_digest_of_blobs(copy))] = "approved"    # the copy is reviewed first
+    run_until_quiet(orch, clock, rounds=3)
+    assert orch.db.sub(sb)["status"] == "SCORED"                   # finished, but waits for the earlier priority
+    assert orch.db.sub(sa)["status"] == "REVIEW"
+    gh.verdicts[(na, content_digest_of_blobs(blobs_for("A")))] = "approved"
+    run_until_quiet(orch, clock, rounds=6)
+    assert orch.db.sub(sa)["reason_code"] == "NEW_CHAMPION"
+    assert orch.db.sub(sb)["reason_code"] == "NOT_DOMINATING"
+    assert orch.db.champion("s1")["sid"] == sa
+
+
+def test_nobody_else_can_carry_a_hotkeys_entry(tmp_path):
+    """Mallory opens a PR with A's committed content in A's directory: it carries nothing (A's commitment names A's
+    GitHub id), so it can neither charge A nor hold A's entry hostage; A's own PR carries it."""
+    orch, chain, clock, pub = make(tmp_path)
+    gh = orch.d.github
+    deposit(chain, "A", 101)
+    commit(chain, "A", blobs_for("A"), 101)
+    gh.add_pr(1, HOTKEYS["A"], "evil", blobs_for("A"))
+    gh.prs[1]["author"] = "mallory"
+    chain.head = 101
+    orch.intake(start_block=101)
+    (s,) = orch.db.subs()
+    assert s["status"] == "WAITING" and s["reason_code"] == "NO_PR" and not orch.db.accounts()[COLDKEYS["A"]]["charged_usd"]
+    w = orch.db.get("prs")["1"]
+    assert w["reason_code"] == "UNCOMMITTED" and "mallory" in w["reason"]
+    gh.add_pr(2, HOTKEYS["A"], "mine", blobs_for("A"))
+    orch.intake()
+    s = orch.db.sub(s["sid"])
+    assert s["status"] == "QUEUED" and s["pr_number"] == 2 and orch.db.get("prs")["1"]["reason_code"] == "PARTICIPATED"
+
+
+def test_a_content_belongs_to_its_earliest_commitment(tmp_path):
+    """An exact copy is rejected at its commitment; another hotkey's content in my directory and a reused GitHub
+    login carry nothing; nothing here depends on the reviewer."""
+    orch, chain, clock, pub = make(tmp_path)
+    gh = orch.d.github
+    a = blobs_for("A")
+    for i, n in enumerate("ABC"):
+        deposit(chain, n, 98 + i)
+    commit(chain, "A", a, 101)
+    commit(chain, "B", a, 102)                            # B saw A's PR and committed the same content later
+    commit(chain, "C", blobs_for("C"), 103)
+    gh.add_pr(1, HOTKEYS["B"], "copy", a)
+    gh.add_pr(2, HOTKEYS["A"], "c-in-a", blobs_for("C"))   # C's content in A's directory
+    gh.add_pr(3, HOTKEYS["A"], "a-renamed", a)            # a new account took the login "u" after a rename
+    gh.prs[3]["author_id"] = 777
+    chain.head = 103
+    orch.intake(start_block=98)
+    sb = orch.db.of_hotkey(HOTKEYS["B"])
+    assert (sb["status"], sb["reason_code"]) == ("REJECTED", "COPY") and "0000000101-0001" in sb["reason"]
+    w = orch.db.get("prs")
+    assert w["1"]["reason_code"] == "PARTICIPATED"
+    assert w["2"]["reason_code"] == "UNCOMMITTED" and "not the committed" in w["2"]["reason"]
+    assert w["3"]["reason_code"] == "UNCOMMITTED" and "777" in w["3"]["reason"]
+    assert orch.db.of_hotkey(HOTKEYS["A"])["reason_code"] == "NO_PR"
+    assert not any(orch.db.accounts()[COLDKEYS[n]]["charged_usd"] for n in "AB")
+
+
+def test_disqualified_champion_hands_back_the_title(tmp_path):
+    orch, chain, clock, pub = make(tmp_path)
+    orch.bootstrap()
+    pay(orch, chain, "A", 101, 1)
+    chain.head = 101
+    orch.intake(start_block=101)
+    run_until_quiet(orch, clock)
+    sid = orch.db.champion("s1")["sid"]
+    orch.disqualify(sid, "agent log: downloaded the benchmark")
+    assert orch.db.champion("s1") is None and orch.db.sub(sid)["status"] == "DISQUALIFIED"
+    assert json.loads(pub.get(layout.WEIGHTS))["weights"][0]["uid"] == 0
+
+
+def test_review_lock_and_carrier(tmp_path):
+    """A rejected review spends the entry and costs nothing. An approved one is locked at that commit and charged;
+    the PR is only the carrier: a rebase keeps the approval, pushes after the lock never change the entry."""
+    orch, chain, clock, pub = make(tmp_path)
+    gh = orch.d.github
+    gh.approve_all = False
+    na = pay(orch, chain, "A", 101, 1)
+    nb = pay(orch, chain, "B", 102, 1)
+    chain.head = 102
+    orch.intake(start_block=101)
+    sa, sb = "0000000101-0001", "0000000102-0001"
+    assert orch.db.sub(sa)["status"] == orch.db.sub(sb)["status"] == "REVIEW"
+
+    gh.verdicts[(na, content_digest_of_blobs(blobs_for("A")))] = "changes"
+    orch.intake()
+    s = orch.db.sub(sa)
+    assert (s["status"], s["reason_code"]) == ("REJECTED", "REVIEW_CHANGES")
+    assert s["reason"].startswith("reviewer note (full review on PR #")
+    assert not orch.db.accounts()[COLDKEYS["A"]]["charged_usd"]
+
+    gh.verdicts[(nb, content_digest_of_blobs(blobs_for("B")))] = "approved"
+    gh.prs[nb]["mergeable"] = False
+    orch.intake()
+    assert orch.db.sub(sb)["reason_code"] == "CONFLICT" and not orch.db.accounts()[COLDKEYS["B"]]["charged_usd"]
+    gh.push(nb, "b-rebased", blobs_for("B"))
+    gh.prs[nb]["mergeable"] = True
+    orch.intake()
+    s = orch.db.sub(sb)
+    assert s["status"] == "QUEUED" and gh.tags[sb] == "b-rebased" and orch.db.accounts()[COLDKEYS["B"]]["held_usd"] == RUN_USD
+    gh.push(nb, "b-later", blobs_for("B") | {"METHOD.md": b"later method of B"})
+    orch.intake()
+    orch.schedule()
+    s = orch.db.sub(sb)
+    assert s["status"] == "RUNNING" and s["locked_commit"] == "b-rebased" and orch.d.runner.methods[sb] == "method of B"
+
+
+def test_stacking_on_a_published_parent(tmp_path):
+    orch, chain, clock, pub = make(tmp_path)
+    pay(orch, chain, "A", 101, 1)
+    chain.head = 101
+    orch.intake(start_block=101)
+    run_until_quiet(orch, clock, rounds=6)
+    sa = "0000000101-0001"
+    assert orch.db.sub(sa)["reason_code"] == "NEW_CHAMPION"
+
+    pay(orch, chain, "E", 110, 1, parent=sa)
+    chain.head = 110
+    orch.intake()
+    run_until_quiet(orch, clock, rounds=6)
+    se = "0000000110-0001"
+    assert orch.d.runner.saw_parent[se]                       # the parent's edit was in the bundle
+    assert orch.db.sub(se)["record"]["parent"] == sa
+    assert orch.db.sub(se)["reason_code"] == "NEW_CHAMPION"   # judged against the champion (its parent)
+    assert pub.get(layout.submission_edit_prefix(se) + "edit.json")
+    assert pub.get(layout.submission_edit_prefix(se) + "parent/edit.json") is None   # chains are not stored twice
+    chain = tmp_path / "chain"
+    orch._materialize_chain(se, chain)                        # rebuilt from the public edits, nested by parent
+    assert json.loads((chain / "edit.json").read_text())["parent"] == "parent/edit.json"
+    assert (chain / "parent" / "edit.json").exists() and not (chain / "parent" / "parent").exists()
+
+
+def test_a_parent_that_can_never_qualify_rejects(tmp_path):
+    """A parent that is not a submission at all can never become one: the entry is rejected, uncharged."""
+    orch, chain, clock, pub = make(tmp_path)
+    pay(orch, chain, "E", 101, 1, parent="0000000001-0001")
+    chain.head = 101
+    orch.intake(start_block=101)
+    (s,) = orch.db.subs()
+    assert (s["status"], s["reason_code"]) == ("REJECTED", "BAD_PARENT") and not orch.db.accounts()[COLDKEYS["E"]]["charged_usd"]
+
+
+def test_our_outages_never_fail_a_ticket(tmp_path):
+    """An unreachable evaluation host backs off without counting; only the submission's own failing jobs count."""
+    from axonry.evaluation.executor import ExecError, JobFailed
+    orch, chain, clock, pub = make(tmp_path)
+    pay(orch, chain, "A", 101, 1)
+    chain.head = 101
+    orch.intake(start_block=101)
+    sid = "0000000101-0001"
+    real_admit = orch.d.executor.admit
+    outages = {"n": 0}
+
+    def flaky_admit(*a):
+        outages["n"] += 1
+        if outages["n"] <= 5:
+            raise ExecError("eval host: no answer within 60s")
+        return real_admit(*a)
+    orch.d.executor.admit = flaky_admit
+    real_upload = orch.d.executor.upload_model
+    upload_outages = {"n": 0}
+
+    def flaky_upload(*a):                       # after admission was published: re-entry must stay consistent
+        upload_outages["n"] += 1
+        if upload_outages["n"] <= 2:
+            raise ExecError("transfer cut")
+        return real_upload(*a)
+    orch.d.executor.upload_model = flaky_upload
+    for _ in range(12):
+        orch.tick()
+        clock.t += 3 * 3600                     # past deadlines and any backoff
+    assert orch.db.sub(sid)["status"] == "PUBLISHED" and orch.db.sub(sid)["infra_retries"] == 0
+    assert orch.db.sub(sid)["reason"] is None                        # no stale note of an outage once it passed
+
+    pay(orch, chain, "D", 120, 1)
+    chain.head = 120
+    orch.intake()
+    orch.d.executor.admit = lambda *a: (_ for _ in ()).throw(JobFailed("job exited 1: model crashed"))
+    for _ in range(10):
+        orch.tick()
+        clock.t += 3 * 3600
+    s = orch.db.sub("0000000120-0001")
+    assert s["status"] == "FAILED" and s["reason_code"] == "EVAL_ERROR"
+
+
+def test_board(tmp_path):
+    """axonry-miner board from public files only: champion + queue, not in queue (and why), recent matches with
+    the not-worse / win thresholds; a deregistered champion shows its weight burned."""
+    from axonry.miner.board import board
+    orch, chain, clock, pub = make(tmp_path)
+    orch.bootstrap()
+    for i, n in enumerate("ACD"):
+        pay(orch, chain, n, 101 + i, 2)
+    chain.head = 110
+    orch.intake(start_block=101)
+    run_until_quiet(orch, clock)                                   # A champion; C, D decided against A
+    gh = orch.d.github
+    gh.approve_all = False
+    pay(orch, chain, "B", 120, 1)                                  # B is funded and waits for review
+    gh.add_pr(9, HOTKEYS["E"], "e1", blobs_for("E"))               # E pushed without committing
+    gh.prs[9]["title"] = "Loop removal\x1b[31m v2"                 # a title trying to inject terminal codes
+    deposit(chain, "F", 121)                                       # F: registered, funds, no commitment
+    gh.prs[3]["state"] = "closed"
+    chain.head = 121
+    orch.intake()
+    orch.db.set("status_at", 0)
+    orch.publish_status()
+    reader = miner.PublicReader(store=pub)
+    status = reader.get(layout.STATUS)
+    matches = reader.get(layout.season_file("s1", "matches.json"))
+    text = board(status, matches, n=20, color=False)
+    print(board(status, matches, n=20, color=True))
+    sid_a = orch.db.champion("s1")["sid"]
+    t1, t2, t3 = text.split("\n\n")[:3]
+    assert "CHAMPION" in t1 and sid_a in t1 and "in review" in t1
+    assert "not committed" in t2 and "\x1b" not in t2 and "account: " in t2 and HOTKEYS["F"][:10] in t2
+    assert "NEW CHAMPION" in t3 and "[" in t3 and "math500" in t3
+    a_row = next(r for r in matches["rows"] if r["sid"] == sid_a)
+    acc, tie_at, win_at, verdict = a_row["scores"]["math500@1"]
+    assert tie_at < win_at and verdict in ("win", "tie")
+    rows3 = t3.splitlines()[3:]
+    assert len(rows3) == 3 and len({ln.index("[") for ln in rows3}) == 1      # columns aligned
+    assert HOTKEYS["D"][:10] not in t2               # D took part already: not listed as a funded newcomer
+    UIDS.pop(HOTKEYS["A"])                                            # the champion is deregistered
+    try:
+        orch.db.set("status_at", 0)
+        orch.publish_status()
+        assert "weight burned" in board(reader.get(layout.STATUS), matches, color=False).split("\n\n")[0]
+    finally:
+        UIDS[HOTKEYS["A"]] = 1
+
+
+def test_a_vanished_machine_runs_again_at_no_cost(tmp_path):
+    """vast drops a run's machine mid-run: our failure. The agent is stopped, everything charged is refunded, the
+    staging area is cleared, and the submission keeps its priority and runs again from the start on a new machine.
+    Runs never hold more machines than max_concurrent."""
+    orch, chain, clock, pub = make(tmp_path)
+    orch.d.max_concurrent = 1
+    for n, (name, block) in enumerate((("A", 101), ("B", 102))):
+        v = blobs_for(name)
+        commit(chain, name, v, block)
+        deposit(chain, name, block, 2 * FEE)
+        orch.d.github.add_pr(n + 1, HOTKEYS[name], f"{name.lower()}1", v)
+    chain.head = 102
+    orch.intake(start_block=101)
+    sa, sb = "0000000101-0001", "0000000102-0001"
+    orch.schedule()
+    assert orch.db.sub(sa)["status"] == "RUNNING" and orch.db.sub(sb)["status"] == "QUEUED"
+    assert [m["name"] for m in orch.d.fleet.active()] == [sa]                        # one machine at a time
+    clock.t += int(1.5 * 3600)
+    orch.supervise()
+    assert orch.db.charged(sa) == {1: HOUR}
+    orch.d.fleet.lost.add(sa)
+    clock.t += 60
+    orch.schedule()                                     # noticed, refunded, and on a new machine at once
+    s = orch.db.sub(sa)
+    assert orch.d.runner.kicked.count(sa) == 2 and orch.d.fleet.released == [sa]
+    assert s["status"] == "RUNNING" and s["record"]["timeline"]["kickoff"] == clock.t and orch.db.charged(sa) == {}
+    assert orch.db.sub(sb)["status"] == "QUEUED"                                        # priority kept
+    assert orch.db.accounts()[COLDKEYS["A"]]["held_usd"] == RUN_USD
+
+
+def with_initial_champion(orch, tmp_path):
+    """The season opens with an initial champion: plan P, pinned in a copy of the registry."""
+    from axonry.common.canon import write_json
+    root = registry_copy(tmp_path)
+    d = root / "initial" / "paper"
+    d.mkdir(parents=True)
+    (d / "edit.json").write_text(json.dumps(PLANS["P"]["spec"]))
+    (d / "REPORT.md").write_text("the paper's edit")
+    write_json(root / "initial" / "paper.json", {
+        "schema": "axonry.initial/1", "id": "paper", "base": "qwen35-0.8b-think", "about": "the paper's model",
+        "files": {f.name: sha256_hex(f.read_bytes()) for f in d.iterdir()}})
+    registry_copy(tmp_path, initial_champion="paper")
+    assert registry.validate(root) == []
+    orch.d.registry_root = root
+
+
+def test_a_season_can_open_with_an_initial_champion(tmp_path):
+    """The initial champion (e.g. the paper's model) is the season's first submission: no hotkey, no PR, no run, no
+    match. It is admitted and evaluated, becomes champion with its weight burned (uid 0), and every miner has to beat
+    it. Miners can stack on it like on any published submission."""
+    orch, chain, clock, pub = make(tmp_path)
+    with_initial_champion(orch, tmp_path)
+    orch.bootstrap()
+    chain.head = 100
+    orch.intake(start_block=100)
+    g = "0000000000-0000"
+    assert orch.db.sub(g)["status"] == "COLLECTING" and orch.db.sub(g)["hotkey"] is None
+    for n, block in (("A", 101), ("E", 102)):
+        v = blobs_for(n, parent=g if n == "E" else None)
+        commit(chain, n, v, block)
+        deposit(chain, n, block, 2 * FEE)
+        orch.d.github.add_pr(block, HOTKEYS[n], n.lower(), v)
+    chain.head = 102
+    orch.intake()
+    run_until_quiet(orch, clock)
+    sa, se = "0000000101-0001", "0000000102-0001"
+    s = orch.db.sub(g)
+    assert (s["status"], s["reason_code"]) == ("PUBLISHED", "INITIAL_CHAMPION") and orch.db.charged(g) == {}
+    assert pub.get(layout.submission_edit_prefix(g) + "edit.json")                 # public, so others can stack
+    a = orch.db.sub(sa)
+    assert a["reason_code"] == "NOT_DOMINATING" and a["record"]["reference"] == g     # A had to beat the paper
+    e = orch.db.sub(se)
+    assert e["reason_code"] == "NEW_CHAMPION" and e["record"]["reference"] == g
+    assert orch.d.runner.saw_parent[se]                                              # E stacked on the paper
+    assert orch.db.champion("s1")["sid"] == se
+    w = json.loads(pub.get(layout.WEIGHTS))
+    assert w["weights"] == [{"uid": UIDS[HOTKEYS["E"]], "hotkey": HOTKEYS["E"], "weight": 1.0}]
+    history = [c["sid"] for c in orch.db.champions("s1")]
+    assert history == [g, se]
+    assert not [m for m in orch.d.executor.evaluated if m.startswith("base:")]       # matches only vs the champion
+    assert "vs_base" not in json.loads(pub.get(layout.submission(se, "score.json")))["benchmarks"]["math500@1"]
+
+
+def test_the_initial_champion_holds_uid0(tmp_path):
+    orch, chain, clock, pub = make(tmp_path)
+    with_initial_champion(orch, tmp_path)
+    orch.bootstrap()
+    chain.head = 100
+    orch.intake(start_block=100)
+    run_until_quiet(orch, clock, rounds=3)
+    assert orch.db.champion("s1")["sid"] == "0000000000-0000"
+    assert json.loads(pub.get(layout.WEIGHTS))["weights"] == [{"uid": 0, "hotkey": None, "weight": 1.0}]
+    orch.db.set("status_at", 0)
+    orch.publish_status()
+    champ = json.loads(pub.get(layout.STATUS))["champion"]
+    assert champ == {"sid": "0000000000-0000", "hotkey": None, "pr": None, "title": "the paper's model",
+                     "initial": "paper"}
+
+
+def test_a_failed_start_keeps_the_machine(tmp_path):
+    """Starting a run failed for a reason of ours (the agent backend, R2, a dropped connection): the run is retried on
+    the same machine after the backoff; only a machine that fails three starts in a row is replaced."""
+    orch, chain, clock, pub = make(tmp_path)
+    v = blobs_for("A")
+    commit(chain, "A", v, 101)
+    deposit(chain, "A", 101, 2 * FEE)
+    orch.d.github.add_pr(1, HOTKEYS["A"], "a1", v)
+    chain.head = 101
+    orch.intake(start_block=101)
+    sid, real = "0000000101-0001", orch.d.runner.prepare
+    orch.d.runner.prepare = lambda *a: (_ for _ in ()).throw(RuntimeError("arbos relay unreachable"))
+    orch.schedule()
+    assert orch.db.sub(sid)["status"] == "QUEUED" and orch.d.fleet.get(sid)["state"] == "ready"   # kept
+    orch.d.runner.prepare = real
+    clock.t += 120
+    orch.schedule()
+    assert orch.db.sub(sid)["status"] == "RUNNING" and orch.d.fleet.released == []
+
+
+def test_a_vanished_evaluation_machine_is_replaced(tmp_path):
+    from axonry.pool.vast import EVAL
+    orch, chain, clock, pub = make(tmp_path)
+    v = blobs_for("A")
+    commit(chain, "A", v, 101)
+    deposit(chain, "A", 101, 2 * FEE)
+    orch.d.github.add_pr(1, HOTKEYS["A"], "a1", v)
+    chain.head = 101
+    orch.intake(start_block=101)
+    orch.schedule()
+    clock.t += 9 * 3600
+    orch.supervise()                                   # COLLECTING: work for the evaluation machine
+    orch.eval_machine()
+    assert orch.d.fleet.get(EVAL)["state"] == "ready"
+    orch.d.fleet.lost.add(EVAL)
+    orch.eval_machine()
+    assert EVAL in orch.d.fleet.released and orch.d.fleet.get(EVAL) is None
+    orch.d.fleet.lost.clear()
+    orch.eval_machine()                                # work remains: a new one
+    assert orch.d.fleet.get(EVAL)["state"] == "ready"
+
+
+def test_the_evaluation_machine_is_kept_through_an_upload_grace(tmp_path):
+    from axonry.pool.vast import EVAL
+    orch, chain, clock, pub = make(tmp_path)
+    orch.d.eval_idle_minutes = 1
+    v = blobs_for("A")
+    commit(chain, "A", v, 101)
+    deposit(chain, "A", 101, 2 * FEE)
+    orch.d.github.add_pr(1, HOTKEYS["A"], "a1", v)
+    chain.head = 101
+    orch.intake(start_block=101)
+    orch.schedule()
+    clock.t = orch.db.run("0000000101-0001")["task"]["run"]["deadline"]
+    orch.supervise()                                   # deadline: COLLECTING, in its upload grace
+    orch.eval_machine()
+    for _ in range(3):                                 # well past eval_idle_minutes, still in the grace
+        clock.t += 120
+        orch.eval_machine()
+    assert orch.d.fleet.get(EVAL)["state"] == "ready" and EVAL not in orch.d.fleet.released

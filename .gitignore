@@ -1,0 +1,9 @@
+drafts/
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.state/
+.local/
+config/axonry.toml
+.pytest_cache/

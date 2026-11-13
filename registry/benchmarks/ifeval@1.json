@@ -1,0 +1,13 @@
+{
+ "adapter": "wsp",
+ "id": "ifeval",
+ "items_manifest_sha256": "bc8731260e0c173e6722981ea1ed76aa045339ce3b1f503928163d2bd41d41dc",
+ "judge": {
+  "delta_win": 1.5,
+  "eps_tie": 1.0
+ },
+ "samples_per_item": 4,
+ "schema": "axonry.benchmark/1",
+ "task": "bench:ifeval",
+ "version": 1
+}

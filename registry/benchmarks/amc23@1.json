@@ -1,0 +1,13 @@
+{
+ "adapter": "wsp",
+ "id": "amc23",
+ "items_manifest_sha256": "6251ebb56c529b24b45fb76257a77f36ddcc3578851c92d6c154b6eb6a88a25c",
+ "judge": {
+  "delta_win": 5.0,
+  "eps_tie": 1.0
+ },
+ "samples_per_item": 4,
+ "schema": "axonry.benchmark/1",
+ "task": "bench:amc23",
+ "version": 1
+}

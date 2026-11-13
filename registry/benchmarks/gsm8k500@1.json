@@ -1,0 +1,13 @@
+{
+ "adapter": "wsp",
+ "id": "gsm8k500",
+ "items_manifest_sha256": "498d000fba0f952107645395f2cc847109a81499c24c4835f343adcad96910e3",
+ "judge": {
+  "delta_win": 1.5,
+  "eps_tie": 1.0
+ },
+ "samples_per_item": 4,
+ "schema": "axonry.benchmark/1",
+ "task": "bench:gsm8k500",
+ "version": 1
+}

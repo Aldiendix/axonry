@@ -1,0 +1,191 @@
+"""Rented machines (pool/vast.py) and arbos account placement, against fakes of the vast API and of ssh."""
+import json
+
+import pytest
+
+from axonry.agent.arbos import ArbosError, ArbosRunner
+from axonry.agent.base import RunHandle
+from axonry.orchestrator.db import DB
+from axonry.pool.vast import Fleet, VastError
+
+
+class FakeAPI:
+    def __init__(self):
+        self.created, self.destroyed, self.status, self.keys, self.taken = [], [], {}, [], None
+
+    def ensure_ssh_key(self, pub):
+        self.keys.append(pub)
+
+    def offers(self, gpu_name, gpus, min_rel, disk, min_down, exclude=(), verified_only=False, min_cuda=0.0):
+        return [{"id": 11, "machine_id": 1, "dph_total": 3.0}, {"id": 12, "machine_id": 2, "dph_total": 3.5}]
+
+    def create(self, offer_id, image, disk, label):
+        if offer_id == self.taken:
+            raise VastError(f"PUT /asks/{offer_id}/: 400 no_such_ask")
+        self.created.append(offer_id)
+        iid = f"i{len(self.created)}"
+        self.status[iid] = {"actual_status": "loading"}
+        return iid
+
+    def show(self, iid):
+        return self.status.get(iid)
+
+    def destroy(self, iid):
+        self.destroyed.append(iid)
+        self.status.pop(iid, None)
+
+
+class FakeRemote:
+    def __init__(self):
+        self.ready, self.failed, self.commands, self.drop, self.unreachable = False, False, [], 0, set()
+
+    def ssh(self, m, key, command, timeout=0, attempts=3):
+        if (m.ip, m.port) in self.unreachable:
+            raise VastError("ssh: Connection closed by remote host")
+        self.commands.append(command)
+        if "READY" in command:
+            return "FAILED\nsetup failed at line 9" if self.failed else ("1700000000" if self.ready else "")
+        return ""
+
+    def scp(self, m, key, src, dst, timeout=0):
+        if self.drop:
+            self.drop -= 1
+            raise VastError("scp failed: lost connection")
+        self.commands.append(f"scp {dst}")
+
+
+def fleet(tmp_path, clock):
+    (tmp_path / "k.pub").write_text("ssh-ed25519 AAAA orchestrator")
+    api, remote = FakeAPI(), FakeRemote()
+    f = Fleet(api, DB(tmp_path / "db.sqlite"), image="img", disk_gb=100, ssh_key=str(tmp_path / "k"),
+              bundle=lambda: tmp_path / "setup.tgz", state_dir=tmp_path / "m", setup_minutes=45,
+              clock=lambda: clock[0], remote=(remote.ssh, remote.scp))
+    return f, api, remote
+
+
+def test_a_machine_is_rented_set_up_and_released(tmp_path):
+    clock = [1000.0]
+    f, api, remote = fleet(tmp_path, clock)
+    f.rent("s1", "RTX 4090", 8)
+    assert api.created == [11] and api.keys == ["ssh-ed25519 AAAA orchestrator"]       # cheapest offer
+    assert f.advance("s1") == "booting"                                                 # instance still loading
+    api.status["i1"] = {"actual_status": "running", "public_ipaddr": "198.51.100.4 ",
+                        "ports": {"22/tcp": [{"HostPort": "40022"}]}}
+    remote.drop = 1                                   # a dropped connection: retried, not a failure
+    assert f.advance("s1") == "booting" and api.destroyed == []
+    assert f.advance("s1") == "setting_up"
+    assert any("setup.sh 8" in c for c in remote.commands) and "scp /root/axonry-setup.tgz" in remote.commands
+    assert f.advance("s1") == "setting_up"
+    remote.ready = True
+    assert f.advance("s1") == "ready"
+    m = f.machine(f.get("s1"))
+    assert (m.ip, m.port, m.user) == ("198.51.100.4", 40022, "root")
+    f.release("s1")
+    assert api.destroyed == ["i1"] and f.get("s1") is None and f.active() == []
+
+
+def test_a_machine_that_fails_setup_is_destroyed_and_never_rented_again(tmp_path):
+    clock = [1000.0]
+    f, api, remote = fleet(tmp_path, clock)
+    f.rent("s1", "RTX 4090", 8)
+    api.status["i1"] = {"actual_status": "running", "public_ipaddr": "198.51.100.4",
+                        "ports": {"22/tcp": [{"HostPort": "40022"}]}}
+    f.advance("s1")
+    remote.failed = True
+    assert f.advance("s1") == "failed" and api.destroyed == ["i1"] and f.get("s1") is None
+    f.rent("s1", "RTX 4090", 8)                       # vast machine 1 failed: the next offer
+    assert api.created == [11, 12]
+    clock[0] += 46 * 60                               # and one that never gets ready in time is dropped too
+    assert f.advance("s1") == "failed" and api.destroyed == ["i1", "i2"]
+
+
+def test_a_host_whose_direct_port_is_unreachable_is_used_through_the_vast_relay(tmp_path):
+    clock = [1000.0]
+    f, api, remote = fleet(tmp_path, clock)
+    f.rent("s1", "RTX 4090", 8)
+    api.status["i1"] = {"actual_status": "running", "public_ipaddr": "198.51.100.4", "ssh_host": "ssh9.vast.ai",
+                        "ssh_port": 16808, "ports": {"22/tcp": [{"HostPort": "40022"}]}}
+    remote.unreachable.add(("198.51.100.4", 40022))
+    assert f.advance("s1") == "setting_up"
+    m = f.machine(f.get("s1"))
+    assert (m.ip, m.port) == ("ssh9.vast.ai", 16808)
+
+
+def test_a_host_that_never_installs_our_key_is_given_up(tmp_path):
+    clock = [1000.0]
+    f, api, remote = fleet(tmp_path, clock)
+    f.rent("s1", "RTX 4090", 8)
+    api.status["i1"] = {"actual_status": "running", "public_ipaddr": "198.51.100.4",
+                        "ports": {"22/tcp": [{"HostPort": "40022"}]}}
+    f.ssh = lambda *a, **k: (_ for _ in ()).throw(VastError("root@x: Permission denied (publickey)."))
+    assert f.advance("s1") == "booting"                # at first: sshd may not have the key yet
+    clock[0] += 16 * 60
+    assert f.advance("s1") == "failed" and api.destroyed == ["i1"]
+
+
+def test_a_vanished_machine_is_noticed(tmp_path):
+    clock = [1000.0]
+    f, api, remote = fleet(tmp_path, clock)
+    f.rent("s1", "RTX 4090", 8)
+    api.status["i1"] = {"actual_status": "running", "public_ipaddr": "198.51.100.4",
+                        "ports": {"22/tcp": [{"HostPort": "40022"}]}}
+    remote.ready = True
+    f.advance("s1")
+    f.advance("s1")
+    assert not f.vanished("s1")
+    api.status["i1"] = {"actual_status": "exited"}
+    assert f.vanished("s1")
+
+
+def test_an_offer_taken_meanwhile_is_skipped(tmp_path):
+    f, api, _ = fleet(tmp_path, [0.0])
+    api.taken = 11                                    # rented by someone else between the search and the order
+    f.rent("s1", "RTX 4090", 8)
+    assert api.created == [12] and f.get("s1")["usd_hour"] == 3.5
+
+
+def test_no_offer_is_an_error(tmp_path):
+    f, api, _ = fleet(tmp_path, [0.0])
+    api.offers = lambda *a: []
+    with pytest.raises(VastError):
+        f.rent("s1", "RTX 4090", 8)
+
+
+def test_runs_go_to_the_arbos_account_with_the_most_room():
+    calls = []
+
+    def run(account, args, timeout):
+        calls.append(account)
+        if args[:3] == ["--json", "project", "list"]:
+            return 0, "[]", ""
+        if args[:3] == ["--json", "project", "create"]:
+            return 0, json.dumps({"id": f"p-{account}"}), ""
+        return 0, json.dumps({"id": "chat1"}), ""
+    r = ArbosRunner({"a": 2, "b": 1}, runner=run)
+    assert r.capacity == 3
+    busy = []
+    for want in ("a", "a", "b"):          # room: a 2, b 1 -> a; then a 1, b 1 -> a (first); then b
+        account = r.pick(busy)
+        assert account == want
+        busy.append(RunHandle("s", "p", "c", {"account": account}))
+    with pytest.raises(ArbosError):
+        r.pick(busy)
+    calls.clear()
+    h = r.prepare("s9", "5Habc", busy[:2])
+    assert h.data == {"account": "b"} and h.workspace == "p-b" and set(calls) == {"b"}
+
+
+def test_a_champion_after_a_disqualified_one_gets_the_next_number(tmp_path):
+    db = DB(tmp_path / "db.sqlite")
+    db.add_submission("0000000001-0001", "s1", "hk1", "ck", "PUBLISHED", {}, "d1", (1, 1))
+    db.add_champion("s1", "0000000001-0001", "hk1", 1, {})
+    db.update("0000000001-0001", "DISQUALIFIED")
+    db.add_champion("s1", "0000000002-0001", "hk2", 2, {})          # used to collide with the disqualified one
+    assert [c["seq"] for c in db.champions("s1")] == [1, 2] and db.champion("s1")["sid"] == "0000000002-0001"
+
+
+def test_a_state_snapshot_holds_what_is_still_in_the_wal(tmp_path):
+    db = DB(tmp_path / "s.sqlite")
+    db.set("cursor", 123)                       # committed, not yet checkpointed into the main file
+    (tmp_path / "copy.sqlite").write_bytes(db.snapshot())
+    assert DB(tmp_path / "copy.sqlite").get("cursor") == 123

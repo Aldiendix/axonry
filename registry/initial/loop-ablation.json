@@ -1,0 +1,11 @@
+{
+ "about": "the model of the Sparks of Weight-Space Programming paper: the thinking-loop direction written by the MLPs of layers 15 and 19 removed (64 columns each), bit-identical to the published checkpoint RikiyaT/Qwen3.5-0.8B-weight-space-programming @ d1671a1",
+ "base": "qwen35-0.8b-think",
+ "files": {
+  "REPORT.md": "98b3a8cb67e4546cd5abb2009d4f97d936ec747bef1bc55e27ed92bb27c274f3",
+  "edit.json": "bbcc838ef258e455ccaf0636418984a9d49534cef163e0aeebd28cd4a92bed2f",
+  "edit.npz": "ff66fccc3ee32991cd2d3721c16d709b67b1af088883f1c4728efa2e8d0e383e"
+ },
+ "id": "loop-ablation",
+ "schema": "axonry.initial/1"
+}

@@ -1,0 +1,68 @@
+"""Who a submission is and what it may carry. Pure decision logic.
+
+A miner is a hotkey: it holds the registration, signs its commitment and gets the weight. One registration is one
+entry: the hotkey's first commitment on the subnet ("<content digest>:<GitHub id>", set_commitment, which the chain
+takes only from a registered hotkey) is its one submission, for good. Its money is its coldkey's: deposits are
+transfers from the coldkey that owns the hotkey, and the fee is charged to that coldkey's account at approval.
+A PR carries the submission when it is open in submissions/<hotkey>/<entry>/, by the committed GitHub id, with
+exactly the committed content. A content committed earlier by another hotkey is a copy.
+"""
+import json
+
+# public, stable reason codes
+NO_PR = "NO_PR"                          # no open PR carries the committed content yet
+UNCOMMITTED = "UNCOMMITTED"              # a PR whose hotkey has no commitment, or does not match it
+PARTICIPATED = "PARTICIPATED"            # a PR of a hotkey whose one entry is already locked or over
+COPY = "COPY"                            # the committed content was committed earlier by another hotkey (final)
+HOTKEY_UNKNOWN = "HOTKEY_UNKNOWN"        # the hotkey has no owning coldkey on chain: nobody to charge
+INSUFFICIENT_FUNDS = "INSUFFICIENT_FUNDS"
+BAD_PR = "BAD_PR"
+BAD_ENTRY = "BAD_ENTRY"
+BASE_NOT_ALLOWED = "BASE_NOT_ALLOWED"
+
+
+class Rejected:
+    def __init__(self, code, detail):
+        self.code, self.detail = code, detail
+
+
+def carrier_problem(s, p) -> str | None:
+    """Why PR candidate p cannot carry submission s (None: it can)."""
+    if p.problem or p.hotkey != s["hotkey"]:
+        return p.problem or "another hotkey's directory"
+    if p.author_id != s["record"]["github_id"]:
+        return f"the PR is by {p.author} (GitHub id {p.author_id}); the commitment names GitHub id {s['record']['github_id']}"
+    if p.digest != s["content_digest"]:
+        return f"the PR content {(p.digest or '')[:12]} is not the committed content {s['content_digest'][:12]}"
+    return None
+
+
+def check_entry(entry_bytes: bytes | None, rules, comp_rules: dict) -> Rejected | dict:
+    """entry.json against the competition protocol (schema id: submission.entry_schema when the protocol names one)
+    and the season's rules (its one base)."""
+    if entry_bytes is None:
+        return Rejected(BAD_ENTRY, "entry.json missing")
+    try:
+        entry = json.loads(entry_bytes)
+    except ValueError as e:
+        return Rejected(BAD_ENTRY, f"entry.json: {e}")
+    want = comp_rules["submission"].get("entry_schema")
+    if not isinstance(entry, dict) or not isinstance(entry.get("base"), str) or (want and entry.get("schema") != want):
+        return Rejected(BAD_ENTRY, f"entry.json needs base{f' and schema {want}' if want else ''}")
+    if entry["base"] != rules["base"]:
+        return Rejected(BASE_NOT_ALLOWED, f"base {entry['base']} is not this season's base {rules['base']}")
+    parent = entry.get("parent")
+    if parent is not None:
+        from ..common.ids import SID_RE  # noqa: PLC0415
+        if not isinstance(parent, str) or not SID_RE.match(parent):
+            return Rejected(BAD_ENTRY, f"entry.json parent must be a submission id or null, not {parent!r}")
+    return entry
+
+
+def check_content(blobs: dict, rules, comp_rules) -> Rejected | dict:
+    """The submission directory's files and entry.json -> entry, or why it cannot enter."""
+    from .github import check_files  # noqa: PLC0415
+    problem = check_files(blobs, comp_rules)
+    if problem:
+        return Rejected(BAD_PR, problem)
+    return check_entry(blobs.get("entry.json"), rules, comp_rules)

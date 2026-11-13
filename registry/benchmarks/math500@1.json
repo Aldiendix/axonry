@@ -1,0 +1,13 @@
+{
+ "adapter": "wsp",
+ "id": "math500",
+ "items_manifest_sha256": "26468556e39a8f23d6ab4a4bcbcdf9f39918d354008f01f30c23e61d0c1cb057",
+ "judge": {
+  "delta_win": 1.5,
+  "eps_tie": 1.0
+ },
+ "samples_per_item": 4,
+ "schema": "axonry.benchmark/1",
+ "task": "bench:math500",
+ "version": 1
+}
