@@ -932,7 +932,7 @@ class Orchestrator:
     ROLES = {
         # fast, time-critical: deadlines, machines and the queue must never wait for a benchmark run
         "main": ("intake", "schedule", "supervise", "decide", "refresh_weights", "publish_status",
-                 "janitor", "snapshot_state"),
+                 "janitor", "snapshot_state", "keep_agents"),
         # slow GPU work on the evaluation machine (admission builds, benchmark generation): its own process
         "eval": ("eval_machine", "collect", "evaluate"),
     }
@@ -944,6 +944,9 @@ class Orchestrator:
                 getattr(self, name)()
             except Exception:
                 log.exception("tick %s", name)
+
+    def keep_agents(self):
+        self.d.runner.keep_alive()
 
     def snapshot_state(self):
         """Hourly consistent copy of the state DB to the private bucket (restore: axonry-orchestrator restore-state)."""

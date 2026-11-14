@@ -6,6 +6,8 @@
                                                      evaluation machine (rented on demand), collect, evaluate. Run one
                                                      process per role (shared SQLite, WAL).
   axonry-orchestrator status                            submissions by status
+  axonry-orchestrator refresh-agents                    keep the agent backend's sign-ins valid while nothing runs
+                                                     (a timer, every 10 min; `run --role main` does it every tick)
   axonry-orchestrator disqualify SID --reason TEXT      public owner ruling: an evaluated submission broke the rules
   axonry-orchestrator calibrate [--limit N --samples K]  A/A noise per benchmark on a rented evaluation machine
   axonry-orchestrator restore-state [--key K]           replace the local state DB by a snapshot from the private bucket
@@ -282,6 +284,7 @@ def main(argv=None):
     r.add_argument("--role", choices=("main", "eval", "all"), default="all")
     r.add_argument("--once", action="store_true")
     sub.add_parser("status")
+    sub.add_parser("refresh-agents")
     ca = sub.add_parser("calibrate", help="A/A noise of every benchmark on the evaluation GPUs (base vs base)")
     ca.add_argument("--limit", type=int, help="items per benchmark (default: the definitions')")
     ca.add_argument("--samples", type=int, help="samples per item (default: the definitions')")
@@ -321,6 +324,9 @@ def main(argv=None):
         return 0 if all(r["ok"] for r in results) else 1
     elif a.cmd == "status":
         cmd_status(cfg, a)
+    elif a.cmd == "refresh-agents":
+        from ..agent.factory import make_runner  # noqa: PLC0415
+        make_runner(cfg).keep_alive()
     elif a.cmd == "restore-state":
         cmd_restore(cfg, a)
     elif a.cmd == "calibrate":

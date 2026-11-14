@@ -196,6 +196,9 @@ class FakeRunner:
     def __init__(self, private, tmp):
         self.private, self.tmp, self.kicked, self.saw_parent, self.methods = private, tmp, [], {}, {}
 
+    def keep_alive(self):
+        pass
+
     capacity = 6
 
     def prepare(self, sid, hotkey, busy=()):

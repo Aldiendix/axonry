@@ -13,12 +13,16 @@
   account's config.
 """
 import json
+import logging
 import os
 import subprocess
 import time
 from pathlib import Path
 
 from ..base import RunHandle, RunStatus
+
+
+log = logging.getLogger(__name__)
 
 
 class ArbosError(RuntimeError):
@@ -109,6 +113,14 @@ class ArbosRunner:
         if code != 0:
             raise ArbosError(f"arbosctl {' '.join(args[:2])} ({account}): {err.strip()[-400:]}")
         return out
+
+    def keep_alive(self):
+        """Refresh every account's token before it lapses, idle or not (a lapsed refresh token needs a new sign-in)."""
+        for account in self.accounts if self.refresh else ():
+            try:
+                self.refresh(account)
+            except Exception as e:
+                log.warning("arbos account %s: token refresh failed: %s", account, e)
 
     def _json(self, account, *args, timeout=300):
         out = self.ctl(account, "--json", *args, timeout=timeout)

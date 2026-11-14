@@ -52,6 +52,7 @@ concurrency_per_gpu = 256      # requests in flight per evaluation GPU (keeps th
 runner = "arbos"
 
 [agent.arbos]                             # sign in each account once: python -m axonry.agent.arbos.auth --account NAME url
+                                          #   (or import issued accounts: ... auth import FILE)
 bin = "arbosctl"                          # tokens: ~/.config/axonry/arbos/<NAME>/, refreshed automatically
 accounts = [{ name = "main", runs = 6 }]  # each account has one 8-CPU/16-GiB box for all its runs: 4-8 runs each
 # exec_prefix = ["proxychains4", "-q", "-f", "~/.config/axonry/proxychains.conf"]   # only without direct internet

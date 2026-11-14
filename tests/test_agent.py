@@ -79,3 +79,14 @@ def test_a_held_arbos_account_takes_no_run():
         raise AssertionError("expected no room")
     except ArbosError:
         pass
+
+
+def test_keep_alive_refreshes_every_account():
+    done = []
+
+    def refresh(account):
+        if account == "a":
+            raise RuntimeError("relay down")
+        done.append(account)
+    ArbosRunner({"a": 1, "b": 1, "c": 1}, runner=lambda *a: (0, "", ""), refresh=refresh).keep_alive()
+    assert done == ["b", "c"]

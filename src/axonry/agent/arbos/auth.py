@@ -14,10 +14,13 @@ Several arbos accounts can run tasks (each has its own box: [agent.arbos] accoun
   python -m axonry.agent.arbos.auth [--account NAME] complete '<redirected URL>'   exchange a pasted redirect URL
                                                                                    (within 60 s)
   python -m axonry.agent.arbos.auth [--account NAME] status | refresh
+  python -m axonry.agent.arbos.auth import FILE      accounts issued as JSON lines ({"handle", "tokens"}): each is
+                                                    saved under its handle and refreshed at once
 Per account (default "main"): ~/.config/axonry/arbos/<NAME>/tokens.json (0600) and arbosctl.json (arbosctl's config).
 Sign in each account with its own GitHub login (a private browser window per account).
 """
 import argparse
+import fcntl
 import http.server
 import json
 import os
@@ -92,14 +95,30 @@ def complete(account, redirected_url, relay=RELAY):
 
 
 def ensure_fresh(account, margin=600):
-    """Refresh the pair when the access token expires within `margin` seconds. Returns the token doc."""
-    doc = load(account)
-    if not doc:
+    """Refresh the pair when the access token expires within `margin` seconds. Returns the token doc. Several
+    processes refresh the same account: the lock makes one rotate the pair and the others read the new one."""
+    if not tokens_path(account).exists():
         raise RuntimeError(f"arbos account {account}: not signed in "
                            f"(python -m axonry.agent.arbos.auth --account {account} url / complete)")
-    if doc["expires_at"] - time.time() > margin:
-        return doc
-    return _save(account, doc["relay"], _post(f"{doc['relay']}/auth/refresh", {"refresh_token": doc["refresh_token"]}))
+    with open(tokens_path(account).with_suffix(".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        doc = load(account)
+        if doc["expires_at"] - time.time() > margin:
+            return doc
+        return _save(account, doc["relay"], _post(f"{doc['relay']}/auth/refresh",
+                                                  {"refresh_token": doc["refresh_token"]}))
+
+
+def import_accounts(path, relay=RELAY):
+    """JSON lines {"handle", "tokens": {access_token, refresh_token, device_id, user}} -> one account per handle."""
+    names = []
+    for line in Path(path).read_text().splitlines():
+        if line.strip():
+            acc = json.loads(line)
+            _save(acc["handle"], relay, acc["tokens"])
+            ensure_fresh(acc["handle"], margin=10**9)     # proves the pair works and sets the true expiry
+            names.append(acc["handle"])
+    return names
 
 
 def listen(account, relay=RELAY, port=53682, timeout=1800):
@@ -139,7 +158,7 @@ def listen(account, relay=RELAY, port=53682, timeout=1800):
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="axonry-arbos-auth")
     ap.add_argument("--account", default="main")
-    ap.add_argument("cmd", choices=("url", "listen", "complete", "status", "refresh"))
+    ap.add_argument("cmd", choices=("url", "listen", "complete", "status", "refresh", "import"))
     ap.add_argument("arg", nargs="?")
     ap.add_argument("--relay", default=RELAY)
     ap.add_argument("--port", type=int, default=53682)
@@ -153,6 +172,9 @@ def main(argv=None):
     elif a.cmd == "complete":
         doc = complete(a.account, a.arg, a.relay)
         print(f"signed in as {doc.get('user')} (device {doc['device_id']})")
+    elif a.cmd == "import":
+        for name in import_accounts(a.arg, a.relay):
+            print(f"{name}: token until {time.ctime(load(name)['expires_at'])}")
     elif a.cmd == "refresh":
         doc = ensure_fresh(a.account, margin=10**9)
         print(f"refreshed; token until {time.ctime(doc['expires_at'])}")
