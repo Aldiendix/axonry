@@ -471,8 +471,8 @@ class World:
         got = self._wait(ok, timeout)
         s = self.db.sub(sid) or {"status": "NOT READ", "reason_code": None, "reason": None}
         detail = f"{s['status']} {s['reason_code'] or ''}: {(s['reason'] or '')[:300]}"
-        if check and got:
-            got = f"{check}: FAIL" in (s["reason"] or "")
+        if check and got:      # the failed check is listed in the review on the PR (the reason is its summary)
+            got = any(f"- {check}: FAIL" in r["body"] for r in self.repo.reviews.get(s["pr_number"], []))
         self.check(f"{sid} -> {status} {code or ''} {check or ''}".strip(), got, detail)
 
     def expect_billed(self, sid):
