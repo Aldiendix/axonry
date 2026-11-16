@@ -15,7 +15,8 @@ trap 'echo "setup failed at line $LINENO" >&2; mkdir -p $R; touch $R/FAILED' ERR
 test "$(nvidia-smi -L | wc -l)" -eq "$1"
 
 pip install -q --no-cache-dir math-verify lm-eval langdetect immutabledict nltk datasets flash-linear-attention boto3
-python3 -m nltk.downloader -q -d /usr/share/nltk_data punkt_tab punkt
+python3 -m nltk.downloader -q -d /usr/share/nltk_data punkt_tab punkt || true   # exits 0 even when it failed:
+NLTK_DATA=/usr/share/nltk_data python3 -c "import nltk; nltk.data.find('tokenizers/punkt_tab/english/')"   # IFEval needs it
 pip install -q --no-cache-dir --no-deps "$B/axonry.tar.gz"
 for t in time check; do
   printf '#!/bin/sh\nexec python3 -m axonry.sandbox_tools %s "$@"\n' $t > /usr/local/bin/axonry-$t

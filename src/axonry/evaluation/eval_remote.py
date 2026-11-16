@@ -16,6 +16,7 @@ the model's); anything else: the run failed.
 """
 import argparse
 import json
+import resource
 import subprocess
 import sys
 import threading
@@ -149,6 +150,10 @@ def main(argv=None):
     ap.add_argument("--benchmarks", required=True)
     ap.add_argument("--port", type=int, default=8100)
     a = ap.parse_args(argv)
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)   # one socket per request in flight (gpus x concurrency)
+    want = 1 << 20 if hard == resource.RLIM_INFINITY else min(hard, 1 << 20)
+    if soft != resource.RLIM_INFINITY and soft < want:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (want, hard))
     from transformers import AutoTokenizer  # noqa: PLC0415
     from wsp import data, profiles  # noqa: PLC0415
     from wsp.common import stable_seed  # noqa: PLC0415
