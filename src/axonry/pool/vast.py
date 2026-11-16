@@ -13,27 +13,22 @@ Lifecycle (table machines, one row per purpose: a submission id, or "eval"):
   gone        destroyed (released, failed or vanished); a vast machine whose setup failed is not rented again
 Setup time is ours: a run's clock starts when its machine is ready.
 """
-import io
 import json
 import logging
 import os
-import shlex
-import tarfile
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
 from pathlib import Path
+
+from .machine import ROOT, Machine, MachineError, give_to_agent, probe, scp, ssh
 
 log = logging.getLogger("axonry.vast")
 API = "https://console.vast.ai/api/v0"
-ROOT = "/srv/axonry"          # the machine's layout (setup.sh)
-EVAL = "eval"                 # the evaluation machine's purpose; a run machine's is its submission id
 KEY_GRACE = 15 * 60           # a running instance that still refuses our key after this never got it: a broken host
-HERE = Path(__file__).parent
 
 
-class VastError(RuntimeError):
+class VastError(MachineError):
     pass
 
 
@@ -96,111 +91,6 @@ class VastAPI:
         rows = listed if isinstance(listed, list) else listed.get("keys") or listed.get("ssh_keys") or []
         if not any((k.get("public_key") or k.get("ssh_key") or "").split()[:2] == public_key.split()[:2] for k in rows):
             self.call("POST", "/ssh/", {"ssh_key": public_key})
-
-
-@dataclass
-class Machine:
-    """ssh access to a ready machine, as root (the orchestrator) or as the agent."""
-    name: str
-    ip: str
-    port: int
-    known_hosts: str
-    proxy_command: str | None = None
-    user: str = "root"
-
-    @property
-    def ssh(self):
-        return f"{self.user}@{self.ip}"
-
-    def ssh_args(self, key=None):
-        args = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=30", "-o", "ServerAliveInterval=30", "-p", str(self.port),
-                "-o", f"UserKnownHostsFile={self.known_hosts}", "-o", "StrictHostKeyChecking=accept-new"]
-        if self.proxy_command:
-            args += ["-o", f"ProxyCommand={self.proxy_command}"]
-        return args + (["-i", key] if key else [])
-
-    def scp_args(self, key=None):
-        return ["-P" if a == "-p" else a for a in self.ssh_args(key)]
-
-    def host_key(self) -> str:
-        """The machine's sshd key as first seen (the agent's known_hosts pins it)."""
-        for line in Path(self.known_hosts).read_text().splitlines():
-            parts = line.split()
-            if len(parts) >= 3 and parts[1] == "ssh-ed25519":
-                return f"{parts[1]} {parts[2]}"
-        raise VastError(f"{self.name}: no ed25519 host key recorded")
-
-
-def ssh(m: Machine, key, command: str, timeout=900, attempts=3, binary=False):
-    """Run a command on the machine -> its stdout (bytes with binary). ssh's own failure to connect (exit 255: a
-    dropped or refused connection) is retried; every command we run is safe to repeat. A failing command is not."""
-    import subprocess  # noqa: PLC0415
-    for i in range(attempts):
-        try:
-            r = subprocess.run(["ssh", *m.ssh_args(key), m.ssh, command], capture_output=True, text=not binary,
-                               timeout=timeout)
-        except subprocess.TimeoutExpired as e:
-            raise VastError(f"{m.name}: `{command[:120]}` timed out") from e
-        if r.returncode != 255 or i == attempts - 1:
-            break
-        time.sleep(5 * (i + 1))
-    if r.returncode != 0:
-        err = r.stderr.decode(errors="replace") if binary else r.stderr
-        raise VastError(f"{m.name}: `{command[:120]}` failed: {err.strip()[-500:]}")
-    return r.stdout
-
-
-def scp(m: Machine, key, srcs, dst: str, timeout=1800, attempts=3):
-    """Copy local files or directories (one path or a list) to dst on the machine; retried, it is repeatable."""
-    import subprocess  # noqa: PLC0415
-    srcs = [str(x) for x in (srcs if isinstance(srcs, (list, tuple)) else [srcs])]
-    for i in range(attempts):
-        try:
-            r = subprocess.run(["scp", "-q", "-r", *m.scp_args(key), *srcs, f"{m.ssh}:{dst}"], capture_output=True,
-                               text=True, timeout=timeout)
-        except subprocess.TimeoutExpired as e:
-            raise VastError(f"{m.name}: scp timed out") from e
-        if r.returncode == 0:
-            return
-        time.sleep(5 * (i + 1))
-    raise VastError(f"{m.name}: scp failed: {r.stderr.strip()[-500:]}")
-
-
-def keypair(comment: str):
-    """-> (private key, public key line): ed25519, no passphrase, written only to a temporary directory."""
-    import subprocess  # noqa: PLC0415
-    import tempfile  # noqa: PLC0415
-    with tempfile.TemporaryDirectory() as d:
-        p = Path(d) / "k"
-        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", comment, "-f", str(p)], check=True)
-        return p.read_text(), p.with_suffix(".pub").read_text().strip()
-
-
-def setup_bundle(project: Path, competition: Path, base_docs: list, dest: Path) -> Path:
-    """What setup.sh installs: our package (as the working tree has it), the competition repo at its checked-out
-    commit (the orchestrator refuses to start unless that is the season's pin), and the season's base definitions."""
-    import subprocess  # noqa: PLC0415
-    from ..registry import base_dirname  # noqa: PLC0415
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    wsp = subprocess.run(["git", "-C", str(competition), "archive", "--format=tar", "HEAD"], capture_output=True,
-                         check=True).stdout
-    with tarfile.open(dest, "w:gz") as tf:
-        def add(name, data, mode=0o644):
-            ti = tarfile.TarInfo(name)
-            ti.size, ti.mode = len(data), mode
-            tf.addfile(ti, io.BytesIO(data))
-        for f in ("setup.sh", "stage_base.py"):
-            add(f, (HERE / f).read_bytes(), 0o755)
-        pkg = io.BytesIO()
-        with tarfile.open(fileobj=pkg, mode="w:gz") as p:
-            for rel in ("pyproject.toml", "README.md", "src"):
-                p.add(project / rel, arcname=f"axonry/{rel}",
-                      filter=lambda ti: None if "__pycache__" in ti.name else ti)
-        add("axonry.tar.gz", pkg.getvalue())
-        add("wsp.tar", wsp)
-        for doc in base_docs:
-            add(f"bases/{base_dirname(doc)}.json", json.dumps(doc).encode())
-    return dest
 
 
 class Fleet:
@@ -292,7 +182,7 @@ class Fleet:
             log.warning("machine %s (instance %s): %s", purpose, row["provider_id"], e)
             self.release(purpose, f"failed: {e}"[:500])
             return "failed"
-        except VastError as e:                 # sshd not up yet, a dropped connection, the API hiccuping
+        except MachineError as e:              # sshd not up yet, a dropped connection, the API hiccuping
             if "Permission denied (publickey)" in str(e) and self.clock() - row["created_at"] > KEY_GRACE:
                 log.warning("machine %s (instance %s): the host never installed our key", purpose, row["provider_id"])
                 self.release(purpose, "failed: the host never installed the account's ssh key")
@@ -312,7 +202,7 @@ class Fleet:
             try:
                 self.ssh(m, self.key, "true", timeout=45, attempts=1)
                 return m
-            except VastError as e:
+            except MachineError as e:
                 if "Permission denied (publickey)" in str(e):
                     raise                     # sshd answered: the key is the problem, not the route
                 err = e
@@ -335,27 +225,11 @@ class Fleet:
         """A ready run machine goes to this run's agent: its login key, its deadline (axonry-time). -> the machine
         as the agent reaches it."""
         m = self.machine(self.get(purpose))
-        q = shlex.quote
-        self.ssh(m, self.key, f"install -d -m 700 -o agent -g agent ~agent/.ssh && echo {q(public_key)} > "
-                              "~agent/.ssh/authorized_keys && chown agent:agent ~agent/.ssh/authorized_keys && "
-                              f"chmod 600 ~agent/.ssh/authorized_keys && echo {int(deadline)} > /etc/axonry-deadline",
-                 timeout=120)
+        give_to_agent(m, self.key, public_key, deadline, self.ssh)
         return Machine(m.name, m.ip, m.port, m.known_hosts, None, "agent")
 
     def probe(self, purpose) -> dict:
-        """What the run's agent gets, as seen on the machine (BRIEF.md lists it)."""
-        m = self.machine(self.get(purpose))
-        out = self.ssh(m, self.key, "nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits; "
-                                    "echo CPUS $(nproc); echo MEM $(free -g | awk '/^Mem/{print $2}'); "
-                                    "echo DISK $(df -BG --output=avail /workspace/work | tail -1 | tr -dc 0-9)",
-                       timeout=120)
-        kv = {line.split()[0]: line.split()[1] for line in out.splitlines() if line.split()[:1] in (["CPUS"], ["MEM"],
-                                                                                                   ["DISK"])}
-        return {"gpus": [{"name": n.strip(), "memory_gib": round(int(mem) / 1024)} for n, mem in
-                         (line.split(",") for line in out.splitlines() if "," in line)],
-                "cpus": int(kv["CPUS"]), "memory": f"{kv['MEM']}g", "disk_gib": int(kv["DISK"]),
-                "network": "open (no allowlist)", "base_path": "/workspace/base", "work_path": "/workspace/work",
-                "competition_repo": "/workspace/WeightSpaceProgramming"}
+        return probe(self.machine(self.get(purpose)), self.key, "open", self.ssh)
 
     def vanished(self, purpose) -> bool:
         """A ready machine whose instance vast no longer runs (host failure, outbid, deleted)."""

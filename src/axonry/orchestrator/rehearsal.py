@@ -4,7 +4,7 @@
 
 Real, as in production: the orchestrator's code with its two roles in two threads (main: intake, schedule,
 supervise, decide, publication; eval: admission, evaluation), the automatic reviewer (review.auto.run with the real
-reviewer model) in a third thread, the rented machines (vast.ai: run sandboxes, the evaluation machine), the arbos
+reviewer model) in a third thread, the GPU machines (owned hosts or vast.ai: run sandboxes, the evaluation machine), the arbos
 agent, R2 temporary credentials and the private bucket, admission and evaluation, judging, signed weights checked
 the way a validator checks them.
 Simulated: the chain (SimChain: a block every 12 s; registrations; the miners' transfers and remarks are decoded by

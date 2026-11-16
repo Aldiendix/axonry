@@ -46,8 +46,9 @@ from ..common.ids import make_sid
 from ..evaluation import staging
 from ..evaluation.executor import JobFailed
 from ..intake import binding
-from ..pool.vast import EVAL, keypair
-from ..publish import publisher
+from ..pool import NoMachine
+from ..pool.machine import EVAL, keypair
+from ..publish import publisher, redact
 from .db import DB
 
 log = logging.getLogger("axonry")
@@ -67,7 +68,7 @@ class Deps:
     db: DB
     chain: object                 # .finalized_head() .items_in_block(b, treasury, netuid) .owner_of .uid_of .alpha_price .uid_hotkeys
     github: object                # intake.github.GitHub-like: scan(), dir_blobs(commit, dir)
-    fleet: object                 # pool.vast.Fleet-like: rented machines (runs, evaluation)
+    fleet: object                 # pool.Machines: owned hosts, then vast.ai (runs, evaluation)
     issue_creds: object           # (store, prefix, ttl) -> creds.TempCreds for that prefix of that store
     runner: object                # agent.base.AgentRunner
     executor: object              # evaluation.executor.SshExecutor-like
@@ -335,7 +336,9 @@ class Orchestrator:
                 try:
                     self.d.fleet.rent(sid, rules["run"]["gpu_model"], rules["run"]["gpus"])
                     held += 1
-                except Exception as e:  # no offer / vast down: ours, retried
+                except NoMachine:       # all busy: the queue waits, in order
+                    return
+                except Exception as e:  # no offer, vast.ai down, a host unreachable: ours, retried
                     self._backoff(s, f"renting a machine: {e}")
                     continue
             state = self.d.fleet.advance(sid)
@@ -386,7 +389,9 @@ class Orchestrator:
                 "run": {"start": start, "deadline": deadline, "wrap_minutes": run["wrap_minutes"],
                         "stall_minutes": run["stall_minutes"], "max_agent_usd": run.get("max_agent_usd")},
                 "sandbox": {"host": m.ip, "port": m.port, "user": m.user, "host_key": m.host_key(),
-                            "private_key": private_key, "resources": resources},
+                            "private_key": private_key, "resources": resources,
+                            "jump": m.jump and {"host": m.jump.host, "port": m.jump.port, "user": m.jump.user,
+                                                "host_key": m.jump.host_key()}},
                 "r2": creds.as_dict(),
                 "limits": brief.limits_from(self.d.comp_rules),
                 "parent": ({"sid": rec["parent"], "path": "parent/edit/edit.json"} if rec.get("parent") else None)}
@@ -405,10 +410,13 @@ class Orchestrator:
         prefix = layout.submission_edit_prefix(parent_sid)
         return {k[len(prefix):]: self.d.public.get(k) for k, _ in self.d.public.list(prefix)}
 
+    def _bundle_path(self, sid) -> Path:
+        return Path(self.d.work_dir) / sid / f"axonry-task-{sid}.tar.gz"
+
     def _bundle(self, task, blobs, parent_sid=None) -> Path:
         d = Path(self.d.work_dir) / task["sid"]
         d.mkdir(parents=True, exist_ok=True)
-        path = d / f"axonry-task-{task['sid']}.tar.gz"
+        path = self._bundle_path(task["sid"])
         with tarfile.open(path, "w:gz") as tf:
             def add(name, data):
                 ti = tarfile.TarInfo(name)
@@ -452,9 +460,13 @@ class Orchestrator:
                 continue
             exported = False
             try:
-                exported = self.d.runner.export(h, Path(self.d.work_dir) / sid / "agent")
+                agent_dir = Path(self.d.work_dir) / sid / "agent"
+                exported = self.d.runner.export(h, agent_dir)
+                if exported:      # published later: without the run's secrets
+                    redact.redact_dir(agent_dir, redact.secrets_in_bundle(self._bundle_path(sid)))
             except Exception:
                 log.exception("export %s", sid)
+                exported = False
             try:
                 self.d.fleet.release(sid)
             except Exception:
@@ -490,6 +502,8 @@ class Orchestrator:
             if work:
                 try:
                     f.rent(EVAL, self.d.eval_gpu_name, self.d.eval_gpus)
+                except NoMachine as e:
+                    log.info("evaluation machine: %s", e)
                 except Exception as e:
                     log.warning("renting the evaluation machine: %s", e)
             return

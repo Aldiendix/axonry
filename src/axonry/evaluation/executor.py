@@ -1,4 +1,4 @@
-"""Work on the owner-only evaluation machine (a rented machine: pool/vast.py): admission build and
+"""Work on the owner-only evaluation machine (an owned host's or a rented one: pool/): admission build and
 benchmark runs with the competition repo and the verified base. No miner code runs there: a submission is data (an
 edit spec), applied by our admission code.
 
@@ -11,7 +11,7 @@ import shlex
 import time
 from pathlib import Path
 
-from ..pool import vast
+from ..pool import machine as machines
 
 
 class ExecError(RuntimeError):
@@ -26,9 +26,9 @@ class JobFailed(ExecError):
 
 class SshExecutor:
     def __init__(self, machine, ssh_key: str | None = None, gpus: int = 8, concurrency_per_gpu: int = 256):
-        """machine: () -> pool.vast.Machine of the evaluation machine (raises ExecError while there is none);
+        """machine: () -> pool.machine.Machine of the evaluation machine (raises ExecError while there is none);
         every evaluation uses all its GPUs (one vLLM server, data parallel)."""
-        self.machine, self.key, self.root, self.gpus = machine, ssh_key, vast.ROOT, gpus
+        self.machine, self.key, self.root, self.gpus = machine, ssh_key, machines.ROOT, gpus
         self.concurrency = concurrency_per_gpu * gpus
 
     def ready(self) -> bool:
@@ -40,8 +40,8 @@ class SshExecutor:
 
     def _ssh(self, remote_cmd: str, timeout=600, binary=False):
         try:
-            return vast.ssh(self.machine(), self.key, remote_cmd, timeout=timeout, binary=binary)
-        except vast.VastError as e:
+            return machines.ssh(self.machine(), self.key, remote_cmd, timeout=timeout, binary=binary)
+        except machines.MachineError as e:
             raise ExecError(f"eval host: {e}") from e
 
     def fetch_file(self, path: str, attempts=3) -> bytes:
@@ -103,8 +103,8 @@ class SshExecutor:
         dst = f"{self.root}/eval/{model_id}/{sub}"
         self._ssh(f"rm -rf {shlex.quote(dst)} && mkdir -p {shlex.quote(dst)}")
         try:
-            vast.scp(self.machine(), self.key, sorted(Path(local).iterdir()), f"{dst}/", timeout=600)
-        except vast.VastError as e:
+            machines.scp(self.machine(), self.key, sorted(Path(local).iterdir()), f"{dst}/", timeout=600)
+        except machines.MachineError as e:
             raise ExecError(f"eval host: {e}") from e
 
 

@@ -1,7 +1,8 @@
 #!/bin/bash
-# Machine setup (pool/vast.py), run as root on a fresh vast instance of the pinned vLLM image: the competition
-# toolkit's runtime and ours, the competition repo, the verified base(s), and the unprivileged `agent` user the run's
-# agent logs in as. Ends with /srv/axonry/READY, or /srv/axonry/FAILED. Argument: the GPUs the machine must have.
+# Machine setup (pool/), run as root in a fresh container of the pinned vLLM image (a vast instance, or an owned
+# host's container: pool/host.sh): the competition toolkit's runtime and ours, the competition repo, the verified
+# base(s), and the unprivileged `agent` user the run's agent logs in as. Ends with /srv/axonry/READY, or
+# /srv/axonry/FAILED. Argument: the GPUs the machine must have.
 #
 # Layout: /srv/axonry/models/<org>__<name>@<rev>/ (verified), /srv/axonry/repos/WeightSpaceProgramming/,
 # /srv/axonry/wsp_work/ (evaluation: benchmark data cache), /srv/axonry/eval/ (evaluation jobs). For the agent:
@@ -14,9 +15,22 @@ trap 'echo "setup failed at line $LINENO" >&2; mkdir -p $R; touch $R/FAILED' ERR
 
 test "$(nvidia-smi -L | wc -l)" -eq "$1"
 
-pip install -q --no-cache-dir math-verify lm-eval langdetect immutabledict nltk datasets flash-linear-attention boto3
-python3 -m nltk.downloader -q -d /usr/share/nltk_data punkt_tab punkt || true   # exits 0 even when it failed:
-NLTK_DATA=/usr/share/nltk_data python3 -c "import nltk; nltk.data.find('tokenizers/punkt_tab/english/')"   # IFEval needs it
+# pinned: graders and loaders must not change under a season (verified together, 2026-11-16)
+pip install -q --no-cache-dir math-verify==0.9.0 lm-eval==0.4.13 langdetect==1.0.9 immutabledict==4.3.1 nltk==3.10.4 \
+  datasets==5.2.0 flash-linear-attention==0.6.0 boto3==1.43.123
+# IFEval needs nltk's sentence tokenizer. The downloader exits 0 even when it failed, and its source (GitHub) is
+# unreachable from some hosts: jsDelivr serves the same files.
+nltk_ok() { NLTK_DATA=/usr/share/nltk_data python3 -c "import nltk; nltk.data.find('tokenizers/punkt_tab/english/')"; }
+timeout 120 python3 -m nltk.downloader -q -d /usr/share/nltk_data punkt_tab punkt >/dev/null 2>&1 || true
+if ! nltk_ok 2>/dev/null; then
+  mkdir -p /usr/share/nltk_data/tokenizers
+  for p in punkt_tab punkt; do
+    curl -fsSL --http1.1 --retry 5 --retry-all-errors -o "/tmp/$p.zip" "https://cdn.jsdelivr.net/gh/nltk/nltk_data@gh-pages/packages/tokenizers/$p.zip"
+    python3 -m zipfile -e "/tmp/$p.zip" /usr/share/nltk_data/tokenizers/ && rm "/tmp/$p.zip"
+  done
+fi
+chmod -R go-w /usr/share/nltk_data      # nltk reads no data that other accounts could have written
+nltk_ok
 pip install -q --no-cache-dir --no-deps "$B/axonry.tar.gz"
 command -v python >/dev/null || ln -s "$(command -v python3)" /usr/local/bin/python   # the image has python3 only
 for t in time check; do

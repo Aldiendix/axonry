@@ -155,7 +155,7 @@ class DB:
         """An approved submission is locked at its commit; from now on it holds its maximum run cost."""
         self.update(sid, record_patch=record_patch, locked_commit=commit, coldkey=coldkey, run_cost=run_cost)
 
-    # ---- rented machines (pool/vast.py)
+    # ---- GPU machines (pool/: owned hosts and vast.ai)
     def add_machine(self, name, provider_id, machine_id, gpu_name, gpus, usd_hour, at):
         """name: what the machine is for (a submission id, or "eval"); at most one active machine per name."""
         self.c.execute("INSERT INTO machines(name,provider_id,machine_id,gpu_name,gpus,usd_hour,state,created_at) "

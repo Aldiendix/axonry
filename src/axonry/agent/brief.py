@@ -107,20 +107,26 @@ before the deadline you will be asked to continue from it.
 
 
 def ssh_files(task: dict) -> dict:
-    """ssh/ of the bundle: key, pinned known_hosts and a config -> `ssh -F ~/.axonry/ssh/config sandbox`."""
-    sb = task["sandbox"]
+    """ssh/ of the bundle: key, pinned known_hosts and a config -> `ssh -F ~/.axonry/ssh/config sandbox`. A sandbox
+    behind a jump host (an owned host's container) is reached through that host's sshd, with the same key."""
+    sb, jump = task["sandbox"], task["sandbox"].get("jump")
     d = "@AXONRY_SSH_DIR@"   # install.sh writes the absolute path ($HOME/.axonry/ssh): no reliance on ssh's %d / ~
-    config = (f"# sandbox of submission {task['sid']}, valid until the deadline\n"
-              f"Host sandbox\n  HostName {sb['host']}\n  Port {sb['port']}\n  User {sb['user']}\n"
-              f"  HostKeyAlias sandbox\n  IdentityFile {d}/id_sandbox\n  IdentitiesOnly yes\n"
-              f"  UserKnownHostsFile {d}/known_hosts\n  StrictHostKeyChecking yes\n  ServerAliveInterval 30\n")
+    keys = (f"  IdentityFile {d}/id_sandbox\n  IdentitiesOnly yes\n"
+            f"  UserKnownHostsFile {d}/known_hosts\n  StrictHostKeyChecking yes\n")
+    config = f"# sandbox of submission {task['sid']}, valid until the deadline\n"
+    if jump:
+        config += (f"Host axonry-jump\n  HostName {jump['host']}\n  Port {jump['port']}\n  User {jump['user']}\n"
+                   f"  HostKeyAlias axonry-jump\n{keys}")
+    config += (f"Host sandbox\n  HostName {sb['host']}\n  Port {sb['port']}\n  User {sb['user']}\n"
+               f"  HostKeyAlias sandbox\n{keys}  ServerAliveInterval 30\n" + ("  ProxyJump axonry-jump\n" if jump else ""))
+    known = f"sandbox {sb['host_key']}\n" + (f"axonry-jump {jump['host_key']}\n" if jump else "")
     install = ("#!/bin/sh\n# install this run's ssh access: ssh -F ~/.axonry/ssh/config sandbox\nset -e\numask 077\n"
                'here=$(cd "$(dirname "$0")" && pwd)\nmkdir -p ~/.axonry/ssh && chmod 700 ~/.axonry ~/.axonry/ssh\n'
                'cp "$here/known_hosts" "$here/id_sandbox" ~/.axonry/ssh/\n'
                'sed "s#@AXONRY_SSH_DIR@#$HOME/.axonry/ssh#g" "$here/config" > ~/.axonry/ssh/config\nchmod 600 ~/.axonry/ssh/*\n'
                "ssh -F ~/.axonry/ssh/config sandbox true && echo 'sandbox reachable: ssh -F ~/.axonry/ssh/config sandbox'\n")
     key = sb["private_key"] if sb["private_key"].endswith("\n") else sb["private_key"] + "\n"
-    return {"config": config.encode(), "known_hosts": f"sandbox {sb['host_key']}\n".encode(),
+    return {"config": config.encode(), "known_hosts": known.encode(),
             "install.sh": install.encode(), "id_sandbox": key.encode()}
 
 

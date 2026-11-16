@@ -19,7 +19,7 @@ from axonry.intake.github import PRCandidate
 from axonry.miner import cli as miner
 from axonry.orchestrator.db import DB
 from axonry.orchestrator.service import Deps, Orchestrator
-from axonry.pool.vast import Machine
+from axonry.pool.machine import Machine
 from axonry_validator import main as validator
 
 OWNER = Keypair.create_from_uri("//Alice")
@@ -860,8 +860,29 @@ def test_a_failed_start_keeps_the_machine(tmp_path):
     assert orch.db.sub(sid)["status"] == "RUNNING" and orch.d.fleet.released == []
 
 
+def test_the_queue_waits_when_no_machine_is_free(tmp_path):
+    """All owned hosts busy and vast.ai disabled: the submission stays queued, in its place, with nothing held against
+    it, and starts as soon as a machine is free."""
+    from axonry.pool import NoMachine
+    orch, chain, clock, pub = make(tmp_path)
+    v = blobs_for("A")
+    commit(chain, "A", v, 101)
+    deposit(chain, "A", 101, 2 * FEE)
+    orch.d.github.add_pr(1, HOTKEYS["A"], "a1", v)
+    chain.head = 101
+    open_season(orch, 101)
+    sid, real = "0000000101-0001", orch.d.fleet.rent
+    orch.d.fleet.rent = lambda *a: (_ for _ in ()).throw(NoMachine("no owned machine free"))
+    orch.schedule()
+    s = orch.db.sub(sid)
+    assert s["status"] == "QUEUED" and s["reason"] is None and not orch.db.get(f"backoff:{sid}:n")
+    orch.d.fleet.rent = real
+    orch.schedule()
+    assert orch.db.sub(sid)["status"] == "RUNNING"
+
+
 def test_a_vanished_evaluation_machine_is_replaced(tmp_path):
-    from axonry.pool.vast import EVAL
+    from axonry.pool.machine import EVAL
     orch, chain, clock, pub = make(tmp_path)
     v = blobs_for("A")
     commit(chain, "A", v, 101)
@@ -883,7 +904,7 @@ def test_a_vanished_evaluation_machine_is_replaced(tmp_path):
 
 
 def test_the_evaluation_machine_is_kept_through_an_upload_grace(tmp_path):
-    from axonry.pool.vast import EVAL
+    from axonry.pool.machine import EVAL
     orch, chain, clock, pub = make(tmp_path)
     orch.d.eval_idle_minutes = 1
     v = blobs_for("A")

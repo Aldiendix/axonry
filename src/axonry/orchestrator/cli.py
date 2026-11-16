@@ -3,13 +3,13 @@
   axonry-orchestrator run [--role main|eval|all] [--once]
                                                      main: intake, schedule (rents run machines), supervise, decide,
                                                      weights, janitor (bootstraps public files first); eval: the
-                                                     evaluation machine (rented on demand), collect, evaluate. Run one
+                                                     evaluation machine (taken on demand), collect, evaluate. Run one
                                                      process per role (shared SQLite, WAL).
   axonry-orchestrator status                            submissions by status
   axonry-orchestrator refresh-agents                    keep the agent backend's sign-ins valid while nothing runs
                                                      (a timer, every 10 min; `run --role main` does it every tick)
   axonry-orchestrator disqualify SID --reason TEXT      public owner ruling: an evaluated submission broke the rules
-  axonry-orchestrator calibrate [--limit N --samples K]  A/A noise per benchmark on a rented evaluation machine
+  axonry-orchestrator calibrate [--limit N --samples K]  A/A noise per benchmark on the evaluation machine
   axonry-orchestrator restore-state [--key K]           replace the local state DB by a snapshot from the private bucket
   axonry-orchestrator registry validate                 cross-check bases / benchmarks / rules versions
   axonry-orchestrator registry pin-base BASE_ID --model-dir DIR
@@ -37,38 +37,51 @@ from ..common.config import Config, private_store, public_store
 
 
 def fleet(cfg, db, rules):
-    """The rented machines ([vast]): one per run, one for evaluation."""
-    from ..pool.vast import Fleet, VastAPI, setup_bundle  # noqa: PLC0415
+    """The GPU machines ([machines]): the owned hosts ([[machines.owned]]) first, then vast.ai ([vast], if enabled)."""
+    from ..evaluation import benchdata  # noqa: PLC0415
+    from ..pool import Machines  # noqa: PLC0415
+    from ..pool.machine import setup_bundle  # noqa: PLC0415
+    from ..pool.owned import OwnedPool  # noqa: PLC0415
+    from ..pool.vast import Fleet, VastAPI  # noqa: PLC0415
     root = Path(__file__).resolve().parents[3]
     memo = {}
 
+    benches = [registry.load_benchmark(k).doc for k in rules.benchmark_keys()]
+
     def bundle():   # built once per process, from this checkout and the pinned competition repo
         if "path" not in memo:
-            memo["path"] = setup_bundle(root, cfg.path_of("competition.local_path"),
-                                        [registry.load_base(rules["base"])], cfg.path_of("state.work_dir") / "setup.tgz")
+            memo["path"] = setup_bundle(root, cfg.path_of("competition.local_path"), [registry.load_base(rules["base"])],
+                                        benches, cfg.path_of("state.work_dir") / "setup.tgz")
         return memo["path"]
-    return Fleet(VastAPI(cfg.secret("vast.api_key")), db, image=cfg.require("vast.image"),
-                 disk_gb=int(cfg.get("vast.disk_gb", 150)), ssh_key=cfg.require("vast.ssh_key"), bundle=bundle,
-                 state_dir=cfg.path_of("state.work_dir") / "machines",
-                 min_reliability=float(cfg.get("vast.min_reliability", 0.95)),
+
+    def items():    # an owned evaluation host's benchmark items, built once per set of benchmarks
+        return benchdata.build(cfg.path_of("competition.local_path"), benches, cfg.path_of("state.work_dir"))
+    key, image, proxy = cfg.require("machines.ssh_key"), cfg.require("machines.image"), cfg.get("machines.proxy_command")
+    state = cfg.path_of("state.work_dir") / "machines"
+    hosts = cfg.get("machines.owned") or []
+    owned = OwnedPool(hosts, db, image=image, ssh_key=key, bundle=bundle, items=items, state_dir=state,
+                      proxy_command=proxy) if hosts else None
+    vast = Fleet(VastAPI(cfg.secret("vast.api_key")), db, image=image, ssh_key=key, bundle=bundle, state_dir=state,
+                 disk_gb=int(cfg.get("vast.disk_gb", 150)), min_reliability=float(cfg.get("vast.min_reliability", 0.95)),
                  min_down_mbps=int(cfg.get("vast.min_down_mbps", 200)),
                  exclude_countries=cfg.get("vast.exclude_countries", ["CN"]),
-                 verified_only=bool(cfg.get("vast.verified_only", False)),
-                 min_cuda=float(cfg.get("vast.min_cuda", 0)),
-                 setup_minutes=int(cfg.get("vast.setup_minutes", 45)), proxy_command=cfg.get("vast.proxy_command"))
+                 verified_only=bool(cfg.get("vast.verified_only", False)), min_cuda=float(cfg.get("vast.min_cuda", 0)),
+                 setup_minutes=int(cfg.get("vast.setup_minutes", 45)),
+                 proxy_command=proxy) if cfg.get("vast.enabled", False) else None
+    return Machines(db, str(Path(key).expanduser()), owned, vast)
 
 
 def eval_executor(cfg, fl):
     """Every evaluation runs on all GPUs of the evaluation machine."""
     from ..evaluation.executor import ExecError, SshExecutor  # noqa: PLC0415
-    from ..pool.vast import EVAL  # noqa: PLC0415
+    from ..pool.machine import EVAL  # noqa: PLC0415
 
     def machine():
         row = fl.get(EVAL)
         if row is None or row["state"] != "ready":
             raise ExecError("no evaluation machine ready")
         return fl.machine(row)
-    return SshExecutor(machine, fl.key, int(cfg.get("vast.eval_gpus", 8)),
+    return SshExecutor(machine, fl.key, int(cfg.get("machines.eval_gpus", 8)),
                        concurrency_per_gpu=int(cfg.get("eval.concurrency_per_gpu", 256)))
 
 
@@ -115,9 +128,9 @@ def deps(cfg: Config, db, rules, comp_rules, **parts):
         "db": db, "fleet": fl, "runner": runner, "executor": eval_executor(cfg, fl), "issue_creds": issue,
         "private": private_store(cfg), "comp_rules": comp_rules, "price_at": cached_price(),
         "work_dir": cfg.path_of("state.work_dir"),
-        "max_concurrent": min(int(cfg.get("vast.max_runs", 16)), runner.capacity),
-        "eval_gpu_name": cfg.get("vast.eval_gpu_name", "RTX 5090"), "eval_gpus": int(cfg.get("vast.eval_gpus", 8)),
-        "eval_idle_minutes": int(cfg.get("vast.eval_idle_minutes", 20)), **parts})
+        "max_concurrent": min(int(cfg.get("machines.max_runs", 16)), runner.capacity),
+        "eval_gpu_name": cfg.get("vast.eval_gpu_name", "RTX 5090"), "eval_gpus": int(cfg.get("machines.eval_gpus", 8)),
+        "eval_idle_minutes": int(cfg.get("machines.eval_idle_minutes", 20)), **parts})
 
 
 def build(cfg: Config):
@@ -213,12 +226,12 @@ def cmd_calibrate(cfg, a):
     if a.limit or a.samples:   # a scaled copy of the registry, never committed
         root = overridden_registry(Path(".state/calibrate/registry"), limit=a.limit, samples=a.samples)
         rules = registry.load_rules_versions(rules.season, root)[-1]
-    from ..pool.vast import EVAL  # noqa: PLC0415
+    from ..pool.machine import EVAL  # noqa: PLC0415
     from .db import DB  # noqa: PLC0415
     fl = fleet(cfg, DB(cfg.path_of("state.db")), rules)
     rented = fl.get(EVAL) is None
     if rented:
-        fl.rent(EVAL, cfg.get("vast.eval_gpu_name", "RTX 5090"), int(cfg.get("vast.eval_gpus", 8)))
+        fl.rent(EVAL, cfg.get("vast.eval_gpu_name", "RTX 5090"), int(cfg.get("machines.eval_gpus", 8)))
     try:
         while (state := fl.advance(EVAL)) not in ("ready", "failed"):
             print(f"evaluation machine: {state}", flush=True)

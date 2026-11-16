@@ -19,7 +19,7 @@ its weight to the best model.
    serves an honest edit (no outside weights, benchmark overfitting or attacks), and that it differs in
    substance from every method committed before it by other miners. The verdict is posted on the pull request;
    once approved, the pull request is locked at that commit and the entry is queued.
-4. When its turn comes, an AI agent carries out the method for a fixed time on its own GPU machine (rented for
+4. When its turn comes, an AI agent carries out the method for a fixed time on its own GPU machine (set up for
    that run alone, destroyed after it). It delivers an **edit**: a small, declarative change to the base weights. Fitting the
    benchmarks and outside weights are forbidden; the agent's full log is published, and a run found to break these rules
    is disqualified publicly by the owner.
