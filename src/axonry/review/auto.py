@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import shlex
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -45,9 +46,8 @@ def prepare(gh, item, contents, rules, work: Path) -> Path:
         if not cache.exists():
             write_dir(cache, gh.dir_blobs(c["commit"], c["directory"]))
         dst = ws / "earlier" / name
-        if not dst.exists():
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            dst.symlink_to(cache.resolve(), target_is_directory=True)
+        if not dst.exists():        # a copy, not a link: the reviewer reads nothing outside its workspace
+            shutil.copytree(cache, dst)
         index.append(f"- `{name}/` hotkey {c['hotkey']} status {c['status']}")
     (ws / "earlier").mkdir(parents=True, exist_ok=True)
     (ws / "earlier" / "INDEX.md").write_text("\n".join(index) + "\n")
