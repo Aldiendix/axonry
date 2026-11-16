@@ -82,7 +82,7 @@ class Deps:
     registry_root: Path = registry.ROOT
     work_dir: Path = field(default_factory=lambda: Path(tempfile.gettempdir()) / "axonry-work")
     max_concurrent: int = 4       # runs holding a machine at once (also bounded by the agent backend's capacity)
-    eval_gpu_name: str = "RTX 5090"
+    eval_gpu_name: str = "RTX 4090"
     eval_gpus: int = 8
     eval_idle_minutes: int = 20
 
