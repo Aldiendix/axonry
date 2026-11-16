@@ -103,8 +103,9 @@ def test_runs_get_fresh_containers_in_free_slots(tmp_path):
 def test_the_evaluation_host_keeps_its_container(tmp_path):
     clock, fake = [1000.0], FakeHost()
     p, db = pool(tmp_path, [{"name": "ev", "address": "203.0.113.6", "role": "eval"}], fake, clock)
-    assert not p.rent(EVAL, "RTX 5090", 4)                                  # needs all 8 GPUs of the host
-    assert p.rent(EVAL, "RTX 5090", 8)                                      # the vast GPU model does not matter
+    assert not p.rent(EVAL, "RTX 4090", 4)                                  # needs all 8 GPUs of the host
+    assert not p.rent(EVAL, "RTX 5090", 8)                                  # and the season's GPU model
+    assert p.rent(EVAL, "RTX 4090", 8)
     assert p.advance(EVAL) == "booting"
     finish(fake, "init-")
     assert p.advance(EVAL) == "booting" and fake.started[-1].startswith("eval-")
@@ -118,7 +119,7 @@ def test_the_evaluation_host_keeps_its_container(tmp_path):
     assert (m.ip, m.port, m.jump.user, m.jump.host) == ("127.0.0.1", 2222, "root", "203.0.113.6")
     p.release(EVAL, "idle")
     assert "axonry-eval" in fake.containers                                 # kept for the next evaluation
-    assert p.rent(EVAL, "RTX 5090", 8) and p.advance(EVAL) == "ready"
+    assert p.rent(EVAL, "RTX 4090", 8) and p.advance(EVAL) == "ready"
 
 
 def test_a_failed_host_step_fails_the_machine_and_is_tried_again(tmp_path):

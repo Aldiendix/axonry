@@ -34,6 +34,7 @@ ssh_key = "~/.ssh/axonry_vast"  # the orchestrator's key: root on every machine 
                                 #   authorized_keys; vast.ai: added to the account itself)
 max_runs = 16                 # runs holding a machine at once (also <= the arbos accounts' runs)
 eval_gpus = 8                 # the evaluation machine's GPUs (an owned evaluation host must have exactly these)
+eval_gpu_name = "RTX 5090"    # every evaluation of a season on one GPU model: scores are compared across runs
 eval_idle_minutes = 20        # a vast.ai evaluation machine is released after this long without work
 # proxy_command = "nc -X 5 -x 127.0.0.1:1084 %h %p"   # only where this host reaches the internet through a proxy
 
@@ -56,7 +57,6 @@ verified_only = false         # also hosts vast has not verified (4 x 4090 suppl
 min_down_mbps = 200           # a machine must pull a ~20 GB image within setup_minutes
 exclude_countries = ["CN"]    # hosts whose route to PyPI / Hugging Face / R2 is unreliable
 setup_minutes = 45            # a machine not ready by then is destroyed and another one rented
-eval_gpu_name = "RTX 5090"    # the evaluation machine (8 x 32 GB: the long answers need KV cache)
 
 [eval]
 concurrency_per_gpu = 256      # requests in flight per evaluation GPU (keeps the cards full; results do not depend on it)

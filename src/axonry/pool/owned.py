@@ -135,8 +135,8 @@ class OwnedPool:
                        jump=self._jump(host, "root"))
 
     def rent(self, purpose: str, gpu_name: str, gpus: int) -> bool:
-        """A free slot (runs: on a host of that GPU model; evaluation: the evaluation host, if it has `gpus` GPUs).
-        -> False when there is none."""
+        """A free slot on a host of that GPU model (runs: a run host; evaluation: the evaluation host, if it has
+        exactly `gpus` GPUs). -> False when there is none."""
         taken = {self._where(r) for r in self.db.machines() if r["provider_id"].startswith(OWNED)}
         for name, h in self.hosts.items():
             try:
@@ -144,12 +144,14 @@ class OwnedPool:
             except MachineError as e:
                 log.warning("owned host %s unreachable: %s", name, str(e)[:200])
                 continue
+            if not inv or not all(gpu_name in g for g in inv):
+                continue
             if purpose == EVAL:
                 if h["role"] != "eval" or (name, EVAL_SLOT) in taken or len(inv) != gpus:
                     continue
                 slot = EVAL_SLOT
             else:
-                if h["role"] != "run" or not inv or not all(gpu_name in g for g in inv):
+                if h["role"] != "run":
                     continue
                 free = [str(n) for n in range(1, len(inv) // gpus + 1) if (name, str(n)) not in taken]
                 if not free:
