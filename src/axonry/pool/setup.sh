@@ -18,19 +18,12 @@ test "$(nvidia-smi -L | wc -l)" -eq "$1"
 # pinned: graders and loaders must not change under a season (verified together, 2026-11-16)
 pip install -q --no-cache-dir math-verify==0.9.0 lm-eval==0.4.13 langdetect==1.0.9 immutabledict==4.3.1 nltk==3.10.4 \
   datasets==5.2.0 flash-linear-attention==0.6.0 boto3==1.43.123
-# IFEval needs nltk's sentence tokenizer. The downloader exits 0 even when it failed, and its source (GitHub) is
-# unreachable from some hosts: jsDelivr serves the same files.
-nltk_ok() { NLTK_DATA=/usr/share/nltk_data python3 -c "import nltk; nltk.data.find('tokenizers/punkt_tab/english/')"; }
-timeout 120 python3 -m nltk.downloader -q -d /usr/share/nltk_data punkt_tab punkt >/dev/null 2>&1 || true
-if ! nltk_ok 2>/dev/null; then
-  mkdir -p /usr/share/nltk_data/tokenizers
-  for p in punkt_tab punkt; do
-    curl -fsSL --http1.1 --retry 5 --retry-all-errors -o "/tmp/$p.zip" "https://cdn.jsdelivr.net/gh/nltk/nltk_data@gh-pages/packages/tokenizers/$p.zip"
-    python3 -m zipfile -e "/tmp/$p.zip" /usr/share/nltk_data/tokenizers/ && rm "/tmp/$p.zip"
-  done
-fi
-chmod -R go-w /usr/share/nltk_data      # nltk reads no data that other accounts could have written
-nltk_ok
+# IFEval's sentence tokenizer, from the bundle (pinned by the orchestrator); nltk reads no data that other accounts
+# could have written
+mkdir -p /usr/share/nltk_data/tokenizers
+python3 -m zipfile -e "$B/punkt_tab.zip" /usr/share/nltk_data/tokenizers/
+chmod -R go-w /usr/share/nltk_data
+NLTK_DATA=/usr/share/nltk_data python3 -c "import nltk; nltk.data.find('tokenizers/punkt_tab/english/')"
 pip install -q --no-cache-dir --no-deps "$B/axonry.tar.gz"
 command -v python >/dev/null || ln -s "$(command -v python3)" /usr/local/bin/python   # the image has python3 only
 for t in time check; do

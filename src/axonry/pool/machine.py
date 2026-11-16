@@ -5,6 +5,7 @@ A machine is a container of the pinned image set up by setup.sh: /srv/axonry (th
 evaluation jobs) belongs to root, the agent logs in as the unprivileged user `agent`. A machine behind a jump host
 (an owned host's container, whose sshd listens on the host's loopback) is reached through that host's sshd.
 """
+import hashlib
 import io
 import json
 import shlex
@@ -17,6 +18,11 @@ from pathlib import Path
 ROOT = "/srv/axonry"          # the machine's layout (setup.sh)
 EVAL = "eval"                 # the evaluation machine's purpose; a run machine's is its submission id
 HERE = Path(__file__).parent
+# IFEval's sentence tokenizer (nltk punkt_tab; sha256 as nltk's data index lists it). Fetched here and shipped in the
+# setup bundle: the downloader's source is unreachable from some machines, and a grader's data must not change.
+NLTK_PUNKT = ("e57f64187974277726a3417ca6f181ec5403676c717672eef6a748a7b20e0106",
+              ("https://raw.githubusercontent.com/nltk/nltk_data/gh-pages/packages/tokenizers/punkt_tab.zip",
+               "https://cdn.jsdelivr.net/gh/nltk/nltk_data@gh-pages/packages/tokenizers/punkt_tab.zip"))
 
 
 class MachineError(RuntimeError):
@@ -125,10 +131,28 @@ def keypair(comment: str):
         return p.read_text(), p.with_suffix(".pub").read_text().strip()
 
 
+def punkt_tab(cache: Path) -> bytes:
+    """nltk's punkt_tab.zip, sha256-checked (cached)."""
+    import urllib.request  # noqa: PLC0415
+    sha, urls = NLTK_PUNKT
+    if cache.exists() and hashlib.sha256(cache.read_bytes()).hexdigest() == sha:
+        return cache.read_bytes()
+    for url in urls:
+        try:
+            data = urllib.request.urlopen(url, timeout=120).read()
+        except OSError:
+            continue
+        if hashlib.sha256(data).hexdigest() == sha:
+            cache.write_bytes(data)
+            return data
+    raise MachineError("nltk punkt_tab: no source served the pinned file")
+
+
 def setup_bundle(project: Path, competition: Path, base_docs: list, bench_docs: list, dest: Path) -> Path:
     """What setup.sh installs: our package (as the working tree has it), the competition repo at its checked-out
-    commit (the orchestrator refuses to start unless that is the season's pin), the season's base definitions, and its
-    benchmarks (key, task, frozen manifest: what an owned evaluation host checks its items against)."""
+    commit (the orchestrator refuses to start unless that is the season's pin), the season's base definitions, its
+    benchmarks (key, task, frozen manifest: what an owned evaluation host checks its items against) and nltk's
+    tokenizer data."""
     from ..evaluation import benchdata  # noqa: PLC0415
     from ..registry import base_dirname  # noqa: PLC0415
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -151,6 +175,7 @@ def setup_bundle(project: Path, competition: Path, base_docs: list, bench_docs: 
         for doc in base_docs:
             add(f"bases/{base_dirname(doc)}.json", json.dumps(doc).encode())
         add("benchmarks.json", json.dumps(benchdata.spec(bench_docs)).encode())
+        add("punkt_tab.zip", punkt_tab(dest.parent / "punkt_tab.zip"))
     return dest
 
 
