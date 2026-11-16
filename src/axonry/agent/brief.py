@@ -58,7 +58,9 @@ Improve base model `{task['base']}` on the benchmarks by **editing its weights d
 toolkit's weight-edit skill: `.claude/skills/weight-edit/` (Claude-style agents) or `.agents/skills/weight-edit/`
 (Codex), same content, under `/workspace/WeightSpaceProgramming/`; toolkit README alongside), producing an edit spec
 (`edit.json` + `edit.npz`) that the organizer applies to the official base weights{" on top of the parent edit" if task.get("parent") else ""}.
-You do not upload weights. Benchmarks are not available to you; use the practice data only.
+You do not upload weights. Benchmarks are not available to you; use the practice data only. Carry out the method
+yourself: the edits already in the toolkit (its `cases/`) are other people's results, and uploading one of them, or
+the parent unchanged, improves nothing.
 {_parent(task)}
 ## Time
 - Start: {_fmt_ts(run['start'])}
@@ -141,7 +143,8 @@ def continue_message(task: dict, now: int) -> str:
     left = max(task["run"]["deadline"] - now, 0)
     return (f"Continue the task (submission {task['sid']}) from PROGRESS.md. Time left: "
             f"{left // 3600} h {left % 3600 // 60} min until {_fmt_ts(task['run']['deadline'])}. "
-            "Re-read BRIEF.md if needed; make sure a complete result is uploaded before the deadline.")
+            "Use it to carry the method further and improve your result (a status report is not progress); re-read "
+            "BRIEF.md if needed, and make sure a complete result is uploaded before the deadline.")
 
 
 def wrap_message(task: dict, now: int) -> str:
