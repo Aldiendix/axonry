@@ -66,7 +66,7 @@ the parent unchanged, improves nothing.
 - Start: {_fmt_ts(run['start'])}
 - **Deadline: {_fmt_ts(run['deadline'])}** ({(run['deadline'] - run['start']) // 3600} h). Anything uploaded later is ignored.
 - Wrap-up reminder at {_fmt_ts(run['deadline'] - run['wrap_minutes'] * 60)}. `axonry-time` in the sandbox prints the time left.
-- One background job of yours lasts at most 60 minutes; you are then asked to continue from PROGRESS.md. Run long GPU
+- One background job of yours lasts at most 60 minutes; you are then asked to continue from the sandbox's PROGRESS.md. Run long GPU
   work detached in the sandbox (`tmux` or `nohup`), so it keeps running when a job ends, and check on it later.{budget}
 - Upload an intermediate result early and re-upload improvements: the last complete upload before the deadline counts.
 
@@ -103,10 +103,10 @@ the parent unchanged, improves nothing.
 3. `REPORT.md`: what failure you targeted, how the spec was derived, controls, what did not work.
 
 ## Progress
-Keep `PROGRESS.md` in your workspace up to date (every ~30 min): what is done, what is next. Its first line is
-your status, shown publicly while you run: one plain sentence of at most 20 words (e.g. "Screening layer 12-16
-directions on gsm8k; best so far +2.1"). When a turn ends
-before the deadline you will be asked to continue from it.
+Keep `PROGRESS.md` in the sandbox, at `/workspace/work/PROGRESS.md`, up to date (every ~30 min): what is done,
+what is next. Its first line is your status, shown publicly while you run: one plain sentence of at most 20 words
+(e.g. "Screening layer 12-16 directions on gsm8k; best so far +2.1"). When a turn ends before the deadline you will
+be asked to continue from it.
 """
 
 
@@ -138,12 +138,12 @@ def kickoff_message(bundle_name: str) -> str:
     return (f"The attached {bundle_name} contains task.json, "
             "BRIEF.md and submission/. Unpack it, read BRIEF.md first (it is authoritative), then "
             "submission/METHOD.md, and carry out the method on the GPU sandbox described in task.json. Upload results "
-            "as BRIEF.md says; upload an early result and improve it. Keep PROGRESS.md current.")
+            "as BRIEF.md says; upload an early result and improve it. Keep the sandbox's /workspace/work/PROGRESS.md current.")
 
 
 def continue_message(task: dict, now: int) -> str:
     left = max(task["run"]["deadline"] - now, 0)
-    return (f"Continue the task (submission {task['sid']}) from PROGRESS.md. Time left: "
+    return (f"Continue the task (submission {task['sid']}) from the sandbox's PROGRESS.md. Time left: "
             f"{left // 3600} h {left % 3600 // 60} min until {_fmt_ts(task['run']['deadline'])}. "
             "Use it to carry the method further and improve your result (a status report is not progress); re-read "
             "BRIEF.md if needed, and make sure a complete result is uploaded before the deadline.")
