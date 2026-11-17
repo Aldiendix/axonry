@@ -1,4 +1,6 @@
-"""A/A noise calibration: the base model against itself under two seed salts, per benchmark.
+"""A/A noise calibration: the season's initial champion (the base when it has none) against itself under two seed
+salts, per benchmark. Challengers are judged against a champion, so its noise is the one that matters (the 0.8B
+thinking base loops on most items and scores near the floor, which hides it).
 
 The paired difference of identical models is pure sampling noise. Its SE at the season's sample sizes tells
   - whether "not worse" (d >= -max(z_tie*SE, eps_tie)) tolerates real noise, and
@@ -18,7 +20,13 @@ def calibrate(executor, rules, registry_root=registry.ROOT, salts=("aa-1", "aa-2
     report = {"base": rules["base"], "salts": list(salts), "benchmarks": {}}
     keys = rules.benchmark_keys()
     benches = {k: registry.load_benchmark(k, registry_root).doc for k in keys}
-    outs = [executor.evaluate(f"base:{rules['base']}", base_doc, list(benches.values()), s) for s in salts]
+    model_id = f"base:{rules['base']}"
+    if iid := rules.doc.get("initial_champion"):
+        model_id = f"aa_{iid}"
+        if not executor.admit(model_id, registry.load_initial(iid, registry_root)[1], base_doc)["passed"]:
+            raise RuntimeError(f"initial champion {iid} failed admission")
+    report["model"] = model_id
+    outs = [executor.evaluate(model_id, base_doc, list(benches.values()), s) for s in salts]
     for key in keys:
         bench, params = benches[key], rules.judge_params(key)
         runs = [parse(o[key]) for o in outs]

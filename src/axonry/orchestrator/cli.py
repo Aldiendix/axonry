@@ -298,7 +298,7 @@ def main(argv=None):
     r.add_argument("--once", action="store_true")
     sub.add_parser("status")
     sub.add_parser("refresh-agents")
-    ca = sub.add_parser("calibrate", help="A/A noise of every benchmark on the evaluation GPUs (base vs base)")
+    ca = sub.add_parser("calibrate", help="A/A noise of every benchmark on the evaluation GPUs (the initial champion, or the base, against itself)")
     ca.add_argument("--limit", type=int, help="items per benchmark (default: the definitions')")
     ca.add_argument("--samples", type=int, help="samples per item (default: the definitions')")
     rs = sub.add_parser("restore-state", help="replace the local state DB by a snapshot (default: the latest)")
