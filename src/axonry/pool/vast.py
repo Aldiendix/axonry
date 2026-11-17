@@ -61,7 +61,8 @@ class VastAPI:
         verified if verified_only). A slow link cannot pull the image in time, so offers below min_down_mbps are left
         out; so are hosts in countries whose route to PyPI, Hugging Face and R2 is unreliable (exclude_countries, ISO
         codes), and hosts whose driver cannot run the image's CUDA natively (min_cuda: consumer GPUs have no forward
-        compatibility). A host that turns out bad fails its setup and is never rented again."""
+        compatibility); never hosts vast has deverified. A host that turns out bad fails its setup and is never rented
+        again."""
         q = {"gpu_name": {"eq": gpu_name}, "num_gpus": {"eq": gpus}, "rentable": {"eq": True}, "rented": {"eq": False},
              **({"verified": {"eq": True}} if verified_only else {}),
              "external": {"eq": False}, "reliability2": {"gte": min_reliability},
@@ -70,7 +71,8 @@ class VastAPI:
              **({"geolocation": {"notin": list(exclude_countries)}} if exclude_countries else {}),
              "direct_port_count": {"gte": 1}, "disk_space": {"gte": disk_gb}, "type": "on-demand",
              "order": [["dph_total", "asc"]], "limit": 100, "allocated_storage": disk_gb}
-        return self.call("POST", "/bundles/", q)["offers"]
+        # a host vast has deverified fails to start containers (seen 2026-11-17: its GPUs cannot be attached)
+        return [o for o in self.call("POST", "/bundles/", q)["offers"] if o.get("verification") != "deverified"]
 
     def create(self, offer_id, image: str, disk_gb: int, label: str) -> str:
         r = self.call("PUT", f"/asks/{offer_id}/", {"client_id": "me", "image": image, "disk": disk_gb, "label": label,

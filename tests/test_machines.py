@@ -213,3 +213,11 @@ def test_sample_parses_gpus_and_status_line(monkeypatch):
     assert got["note"] == " ".join(f"w{i}" for i in range(20))
     monkeypatch.setattr(machine, "ssh", lambda *a, **k: "5, 1, 2\n---\n")
     assert machine.sample(None, None)["note"] is None
+
+
+def test_offers_leave_out_hosts_vast_deverified():
+    from axonry.pool.vast import VastAPI
+    api = VastAPI("k")
+    api.call = lambda *a, **k: {"offers": [{"id": 1, "verification": "deverified"}, {"id": 2, "verification": "verified"},
+                                           {"id": 3, "verification": "unverified"}]}
+    assert [o["id"] for o in api.offers("RTX 4090", 4, 0.95, 150, 200)] == [2, 3]
