@@ -16,14 +16,14 @@ its weight to the best model.
    can only be committed after the original became public, so an exact copy is rejected at once and an altered one
    is always decided after the original.
 3. A reviewer checks, in priority order, that the method is a real weight-editing method, that everything in it
-   serves an honest edit (no outside weights, benchmark overfitting or attacks), and that it differs in
-   substance from every method of other miners committed before it and still in progress (a finished entry's
-   method is free to build on). The verdict is posted on the pull request;
-   once approved, the pull request is locked at that commit and the entry is queued.
-4. When its turn comes, an AI agent carries out the method for a fixed time on its own GPU machine (set up for
-   that run alone, destroyed after it). It delivers an **edit**: a small, declarative change to the base weights. Fitting the
-   benchmarks and outside weights are forbidden; the agent's full log is published, and a run found to break these rules
-   is disqualified publicly by the owner.
+   serves an honest edit (no outside weights, benchmark overfitting or attacks), and that it differs in substance
+   from every method of other miners committed before it and still in progress (a finished entry's method is free
+   to build on). The verdict is posted on the pull request; once approved, the pull request is locked at that
+   commit and the entry is queued. A finished entry gets its result on its pull request, which is then closed.
+4. When its turn comes, an AI agent carries out the method on its own GPU machine (set up for that run alone,
+   destroyed after it), until the season's deadline or until it says it is done. It delivers an **edit**: a small,
+   declarative change to the base weights. Fitting the benchmarks and outside weights are forbidden; the agent's
+   full log is published, and a run found to break these rules is disqualified publicly by the owner.
 5. The subnet checks the edit against the rules, builds the model and evaluates it on the season's benchmarks,
    paired with the current champion on the same questions and seeds.
 6. The edit becomes **champion** if it is not worse on any benchmark (beyond noise) and clearly better on at least
@@ -113,24 +113,28 @@ pip install "axonry @ git+https://github.com/AxOrganization/axonry"
 axonry-validator --wallet <wallet> --hotkey <validator hotkey>
 ```
 
-The subnet's netuid, the owner key that signs the weights and where they are published are built in.
+You need a hotkey registered on the subnet with a validator permit (enough stake), and a process manager (systemd,
+pm2) to keep the command running. The subnet's netuid, the owner key that signs the weights and where they are
+published are built in; nothing is configured.
 
 The validator:
 
-- reads the published weights on a fixed schedule and rejects anything not signed by the owner, or older than what
+- reads the published weights every 20 minutes and rejects anything not signed by the owner, or older than what
   it has already seen;
 - checks every target against the chain, and sends a weight to the burn uid if the champion's hotkey is no longer
   registered;
-- keeps setting the last valid weights if the publication is unreachable.
+- keeps setting the last valid weights if the publication is unreachable;
+- follows the subnet's own settings when it sets weights (plain or commit-reveal, as the chain requires).
 
 No storage keys, GPUs or data are needed.
 
 ## Public data
 
-Everything the subnet decides is published and can be recomputed:
+Everything the subnet decides is published at `https://storage.axonry.ai` and can be recomputed:
 
 - the rules of each season;
-- the live queue and every account (deposits, charges, held, available, in USD);
+- the live queue (`status.json`, about once a minute): every registered miner with its account (deposits,
+  charges, held, available, in USD) and, while it runs, its run's progress line and GPU use;
 - for every submission: its record, admission result, per-question results, scores, edit and agent log;
 - the signed weights.
 

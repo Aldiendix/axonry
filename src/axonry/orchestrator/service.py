@@ -293,7 +293,8 @@ class Orchestrator:
                 "pr": {**self.db.sub(sid)["record"]["pr"], "locked_commit": pr.head, "lock_tag": f"axonry/{sid}"},
                 "coldkey": coldkey, "base": entry["base"], "parent": entry.get("parent"),
                 "fee": {"usd_per_gpu_hour": rules["fee"]["usd_per_gpu_hour"], "gpus": rules["run"]["gpus"],
-                        "max_hours": rules["run"]["hours"], "max_usd": pricing.run_cost_musd(rules) / 1e6},
+                        "max_hours": rules["run"]["hours"], "max_agent_usd": rules["run"]["max_agent_usd"],
+                        "max_usd": pricing.run_cost_musd(rules) / 1e6},
                 "timeline": {**rec.get("timeline", {}), "entered": self.now()}})
             self._set_stage(self.db.sub(sid), "QUEUED", None, None)
         return pr.number
@@ -952,7 +953,7 @@ class Orchestrator:
                 for s in sorted(self.db.subs(), key=self.priority)
                 if s["pr_number"] and s["status"] not in ("PUBLISHED", "REJECTED", "FAILED", "DISQUALIFIED")]
 
-    def janitor(self, every=3600, keep_snapshots=48):
+    def janitor(self, every=3600, keep_snapshots=8):
         """Hourly: staging uploads of finished submissions (their edit is published; nothing in the private bucket
         outlives its purpose) and old state snapshots."""
         if self.d.clock() - self.db.get("janitor_at", 0) < every:
@@ -984,8 +985,9 @@ class Orchestrator:
         self.d.runner.keep_alive()
 
     def snapshot_state(self):
-        """Hourly consistent copy of the state DB to the private bucket (restore: axonry-orchestrator restore-state)."""
-        if self.now() - (self.db.get("snapshot_at") or 0) < 3600:
+        """A consistent copy of the state DB to the private bucket every 6 hours (restore: axonry-orchestrator
+        restore-state)."""
+        if self.now() - (self.db.get("snapshot_at") or 0) < 6 * 3600:
             return
         self.d.private.put(layout.STATE_PREFIX + f"db-{self.now()}.sqlite", self.db.snapshot(),
                            "application/octet-stream")

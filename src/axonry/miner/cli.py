@@ -25,9 +25,10 @@ Submit:
 One registration is one entry: only a hotkey's first commitment counts, and the content and GitHub account it names
 can never change. Commit first and push only after the command returns: a content belongs to its earliest commitment,
 and content pushed before it is committed can be copied and committed first by others. The run is paid by the
-GPU-hour from the account of the coldkey owning the hotkey: deposit from that coldkey, as plain transfers (this
-tool), not via proxies or multisig. The account must cover a whole run before review; each full hour is charged as
-it passes and the rest when the run ends. A rejected review costs nothing, but the hotkey's entry is spent.
+GPU-hour plus its agent's model use, from the account of the coldkey owning the hotkey: deposit from that coldkey,
+as plain transfers (this tool), not via proxies or multisig. The account must cover a whole run before review
+(`price`); each full GPU hour is charged as it passes, the rest and the agent's use when the run ends. A rejected
+review costs nothing, but the hotkey's entry is spent.
 """
 import argparse
 import json
@@ -123,8 +124,9 @@ def cmd_show(r, sid):
         print("  entry    " + " · ".join(f for f in facts if f))
     fee = sub.get("fee") or {}
     if fee:
-        print(f"  fee      {fee['usd_per_gpu_hour']} USD per GPU-hour x {fee['gpus']} GPU, at most {fee['max_usd']:.2f} "
-              f"USD; charged {fee.get('charged_usd', 0):.2f} USD")
+        agent = f" + agent up to {fee['max_agent_usd']} USD" if fee.get("max_agent_usd") else ""
+        print(f"  fee      {fee['gpus']} GPU x {fee['usd_per_gpu_hour']} USD per GPU-hour{agent}, held "
+              f"{fee['max_usd']:.2f} USD; charged {fee.get('charged_usd', 0):.2f} USD")
     tl = sub.get("timeline") or {}
     events = sorted(((v, k) for k, v in tl.items() if v and (k != "deadline" or "agent_end" not in tl)),
                     key=lambda e: e[0])     # the deadline is a plan: shown while the run is on
@@ -187,8 +189,14 @@ def cmd_weights(r, network):
     if not w:
         print("no weights published yet")
         return
-    print(json.dumps(w, indent=1))
-    print(f"signature: {'valid' if w and verify_doc(w, published.get(network)['owner']) else 'INVALID'}")
+    owner = published.get(network)["owner"]
+    champ = w.get("champion")
+    print(f"  sequence   {w['sequence']} · season {w.get('season')} · issued "
+          f"{time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(w.get('issued_at', 0)))} (block {w.get('issued_block')})")
+    who = f"{champ['sid']} · uid {champ.get('uid')} · {champ.get('hotkey')}" if champ else "none: weight burned to uid 0"
+    print(f"  champion   {who}")
+    print("  weights    " + ", ".join(f"uid {x['uid']}: {x['weight']}" for x in w["weights"]))
+    print(f"  signature  {'valid' if verify_doc(w, owner) else 'INVALID'} (owner {owner})")
 
 
 def cmd_balance(r, coldkey):
@@ -211,14 +219,18 @@ def cmd_price(r, network):
     tao_usd, sources = pricing.tao_usd_at(int(time.time()))
     alpha = _alpha_price(network, rules) if "alpha" in rules["fee"]["assets"] else None
     now = {"tao": top / tao_usd, "alpha": top / tao_usd / alpha if alpha else None}
-    print(f"a run: {run['gpus']} x {run['gpu_model']} GPU, at most {run['hours']} h at "
-          f"{rules['fee']['usd_per_gpu_hour']} USD per GPU-hour ({pricing.gpu_max_musd(rules) / pricing.MUSD:.2f} USD), "
-          f"plus the agent's model use (at most {run['max_agent_usd']} USD), plus "
-          f"{rules['fee'].get('slippage', 0):.0%}: at most {top:.2f} USD.")
-    print("your account must hold that much before review (nothing is charged until the run starts; each full GPU "
-          "hour is charged as it passes, the rest and the agent's use when the run ends).")
-    print("now " + " or ".join(f"{v:.6f} {a}" for a, v in now.items() if v and a in rules["fee"]["assets"])
-          + f" (TAO/USD {tao_usd:.2f} from {', '.join(sources)}); a deposit counts in USD at the price of its block.")
+    slip = rules["fee"].get("slippage", 0)
+    print(f"a run: {run['gpus']} x {run['gpu_model']}, at most {run['hours']} h")
+    print(f"  GPUs     {rules['fee']['usd_per_gpu_hour']} USD per GPU-hour, at most "
+          f"{pricing.gpu_max_musd(rules) / pricing.MUSD:.2f} USD")
+    print(f"  agent    its model use, at most {run['max_agent_usd']:.2f} USD")
+    if slip:
+        print(f"  margin   {slip:.0%}")
+    print(f"  held     {top:.2f} USD: your account must hold this before review")
+    print(f"  now      " + " or ".join(f"{v:.6f} {a}" for a, v in now.items() if v and a in rules["fee"]["assets"])
+          + f" (TAO/USD {tao_usd:.2f} from {', '.join(sources)})")
+    print("Nothing is charged until the run starts. Each full GPU hour is charged as it passes; the rest of the GPU time\n"
+          "and the agent's use when the run ends. A deposit counts in USD at the price of its block.")
 
 
 def _alpha_price(network, rules):
