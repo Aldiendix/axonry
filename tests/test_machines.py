@@ -12,6 +12,7 @@ from axonry.pool.vast import Fleet, VastError
 class FakeAPI:
     def __init__(self):
         self.created, self.destroyed, self.status, self.keys, self.taken = [], [], {}, [], None
+        self.taken_msg = "no_such_ask"
 
     def ensure_ssh_key(self, pub):
         self.keys.append(pub)
@@ -21,7 +22,7 @@ class FakeAPI:
 
     def create(self, offer_id, image, disk, label):
         if offer_id == self.taken:
-            raise VastError(f"PUT /asks/{offer_id}/: 400 no_such_ask")
+            raise VastError(f"PUT /asks/{offer_id}/: 400 {self.taken_msg}")
         self.created.append(offer_id)
         iid = f"i{len(self.created)}"
         self.status[iid] = {"actual_status": "loading"}
@@ -142,6 +143,9 @@ def test_an_offer_taken_meanwhile_is_skipped(tmp_path):
     api.taken = 11                                    # rented by someone else between the search and the order
     f.rent("s1", "RTX 4090", 8)
     assert api.created == [12] and f.get("s1")["usd_hour"] == 3.5
+    api.taken_msg = "GPU conflict: requesting already rented gpus {241322}"   # an offer still listed, its GPUs gone
+    f.rent("s2", "RTX 4090", 8)
+    assert api.created == [12, 12]
 
 
 def test_no_offer_is_an_error(tmp_path):

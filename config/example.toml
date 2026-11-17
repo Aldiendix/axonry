@@ -50,6 +50,7 @@ eval_idle_minutes = 20        # a vast.ai evaluation machine is released after t
 [vast]                        # GPU machines rented on vast.ai: one per run, one for evaluation
 enabled = false
 api_key_env = "VASTAI_KEY"
+max_gpus = 24                 # all vast.ai machines together (runs and, when the owned one is busy, evaluation)
 min_cuda = 13.0               # the image is CUDA 13.0: the host driver must support it natively
 disk_gb = 150
 min_reliability = 0.95

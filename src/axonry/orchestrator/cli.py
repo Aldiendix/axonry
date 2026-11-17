@@ -68,7 +68,8 @@ def fleet(cfg, db, rules):
                  verified_only=bool(cfg.get("vast.verified_only", False)), min_cuda=float(cfg.get("vast.min_cuda", 0)),
                  setup_minutes=int(cfg.get("vast.setup_minutes", 45)),
                  proxy_command=proxy) if cfg.get("vast.enabled", False) else None
-    return Machines(db, str(Path(key).expanduser()), owned, vast)
+    cap = cfg.get("vast.max_gpus")
+    return Machines(db, str(Path(key).expanduser()), owned, vast, int(cap) if cap is not None else None)
 
 
 def eval_executor(cfg, fl):

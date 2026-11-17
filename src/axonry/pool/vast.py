@@ -133,7 +133,7 @@ class Fleet:
                 iid = self.api.create(o["id"], self.image, self.disk_gb, f"axonry {purpose}")
                 break
             except VastError as e:
-                if "no_such_ask" not in str(e) and "not available" not in str(e):
+                if not any(t in str(e) for t in ("no_such_ask", "not available", "already rented")):
                     raise
         else:
             raise VastError(f"no {gpus} x {gpu_name} offer on vast.ai right now")

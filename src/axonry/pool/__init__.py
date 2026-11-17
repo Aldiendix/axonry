@@ -9,8 +9,8 @@ class NoMachine(MachineError):
 
 
 class Machines:
-    def __init__(self, db, key: str, owned=None, vast=None):
-        self.db, self.key, self.owned, self.vast = db, key, owned, vast
+    def __init__(self, db, key: str, owned=None, vast=None, vast_max_gpus: int | None = None):
+        self.db, self.key, self.owned, self.vast, self.vast_max_gpus = db, key, owned, vast, vast_max_gpus
 
     def _of(self, row):
         return self.owned if row["provider_id"].startswith(OWNED) else self.vast
@@ -29,6 +29,9 @@ class Machines:
             return
         if self.vast is None:
             raise NoMachine(f"no owned machine free for {purpose} ({gpus} x {gpu_name}) and vast.ai is disabled")
+        used = sum(m["gpus"] for m in self.db.machines() if not m["provider_id"].startswith(OWNED))
+        if self.vast_max_gpus is not None and used + gpus > self.vast_max_gpus:
+            raise NoMachine(f"no owned machine free for {purpose} and vast.ai is at {used} of {self.vast_max_gpus} GPUs")
         self.vast.rent(purpose, gpu_name, gpus)
 
     def advance(self, purpose) -> str:
