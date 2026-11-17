@@ -18,9 +18,9 @@
   }
  ],
  "competition": {
-  "commit": "5a4f8f9202739a444e33a91d7a7a77a274c7810c",
+  "commit": "fb2181153e12c71967c53a48b172df36b79c93d8",
   "repo": "AxOrganization/WeightSpaceProgramming",
-  "rules_sha256": "237cca4d02d059c0578f54d235d280c63de31f1585fe705c0103d1436c5a691c"
+  "rules_sha256": "53ce964560d57d8dfb3995ab41e0fabb76c4247c17be126c5c7ba49a2b9328cb"
  },
  "effective_block": 0,
  "fee": {
