@@ -80,12 +80,19 @@ init() {
   local cfg=/etc/docker/daemon.json old
   old=$(cat $cfg 2>/dev/null || true)
   mkdir -p /etc/docker
-  if [ "$china" = 1 ]; then
-    echo '{"icc": false, "max-concurrent-downloads": 8,
-           "registry-mirrors": ["https://docker.m.daocloud.io", "https://docker.1ms.run"]}' > $cfg
-  else
-    echo '{"icc": false}' > $cfg
-  fi
+  python3 - "$cfg" "$china" <<'PY'   # our keys into the host's own settings (log limits, runtimes stay)
+import json, sys
+p, china = sys.argv[1], sys.argv[2] == "1"
+try:
+    c = json.load(open(p))
+except (OSError, ValueError):
+    c = {}
+c["icc"] = False
+if china:
+    c.update({"max-concurrent-downloads": 8,
+              "registry-mirrors": ["https://docker.m.daocloud.io", "https://docker.1ms.run"]})
+json.dump(c, open(p, "w"), indent=2)
+PY
   nvidia-ctk runtime configure --runtime=docker >/dev/null
   systemctl enable docker >/dev/null 2>&1
   if [ "$(cat $cfg)" != "$old" ] || ! systemctl is-active -q docker; then systemctl restart docker; fi
