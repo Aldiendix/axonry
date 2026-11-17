@@ -28,6 +28,7 @@
    "tao",
    "alpha"
   ],
+  "slippage": 0.02,
   "treasury": "5HDnT2yz6pJE2dWvKDvmCoXFJvzHCtecupTHSnMcqSxHLkpG",
   "usd_per_gpu_hour": 2
  },
@@ -46,12 +47,14 @@
  "run": {
   "gpu_model": "RTX 4090",
   "gpus": 4,
-  "hours": 8,
+  "hours": 6,
   "max_agent_usd": 50,
   "max_job_failures": 2,
   "stall_minutes": 20,
-  "upload_grace_minutes": 30,
-  "wrap_minutes": 30
+  "wrap_minutes": [
+   30,
+   10
+  ]
  },
  "schema": "axonry.rules/1",
  "season": "s1"

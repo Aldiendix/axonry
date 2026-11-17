@@ -166,6 +166,9 @@ class SimRepo:
                 return [] if page > 1 else [{"number": n, "head": {"sha": pr["head"]}, "user": self.user(pr["author"]),
                                              "title": pr.get("title", "")}
                                             for n, pr in self.prs.items() if pr["state"] == "open"]
+            if parts[0] == "pulls" and len(parts) == 2 and method == "PATCH":
+                self.prs[int(parts[1])]["state"] = body["state"]
+                return {"state": body["state"]}
             if parts[0] == "pulls" and len(parts) == 2:
                 pr = self.prs[int(parts[1])]
                 return {"state": pr["state"], "head": {"sha": pr["head"]}, "mergeable": True,
@@ -476,10 +479,12 @@ class World:
         self.check(f"{sid} -> {status} {code or ''} {check or ''}".strip(), got, detail)
 
     def expect_billed(self, sid):
-        """Charged each full hour and settled at the end: exactly the run's used time, never more than its maximum."""
+        """GPUs charged each full hour and settled at the end, plus the agent's model use: exactly what the run used,
+        never more than its maximum."""
         s = self.db.sub(sid)
         t = s["record"]["timeline"]
-        want = pricing.used_musd(self.rules, t["agent_end"] - t["kickoff"]) if t.get("agent_end") else None
+        want = (pricing.used_musd(self.rules, t["agent_end"] - t["kickoff"])
+                + pricing.agent_musd(self.rules, (s["record"].get("agent") or {}).get("usd"))) if t.get("agent_end") else None
         got = sum(self.db.charged(sid).values())
         self.check(f"{sid} charged for its run time", want is not None and got == want,
                    f"charged {got / 1e6:.4f} USD for {((t.get('agent_end') or 0) - t['kickoff']) / 3600:.2f} h "
@@ -534,7 +539,7 @@ def run(cfg, hours=1.5, limit=40, samples=1, fresh=False, review_command=None):
         rules["effective_block"] = opened
         rules["fee"].update(treasury=treasury, assets=["tao"])
         rules["review"]["reviewers"] = [REVIEWER]
-        rules["run"].update(hours=hours, wrap_minutes=min(30, int(hours * 60 / 4)), upload_grace_minutes=10)
+        rules["run"].update(hours=hours, wrap_minutes=[min(30, int(hours * 60 / 4)), min(10, int(hours * 60 / 8))])
     reg = overridden_registry(HOME / "registry", limit, samples, season="rehearsal", rules_patch=patch)
     rules = registry.load_rules_versions("rehearsal", reg)[-1]
     comp_rules = competition_rules(cfg.path_of("competition.local_path"), rules)

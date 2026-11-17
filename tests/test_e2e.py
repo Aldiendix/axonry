@@ -136,6 +136,9 @@ class FakeGitHub:
     def comment(self, number, text):
         self.comments.append((number, text))
 
+    def close(self, number):
+        self.prs[number]["state"] = "closed"
+
     def candidates(self):
         """What intake.github.scan reports: open PRs and the content digest at their head."""
         out = []
@@ -151,7 +154,7 @@ class FakeGitHub:
 class FakeFleet:
     """Rented machines, ready at once; `lose` makes vast drop one."""
     def __init__(self, db):
-        self.db, self.lost, self.released = db, set(), []
+        self.db, self.lost, self.released, self.done = db, set(), [], set()
 
     def get(self, purpose):
         return next((m for m in self.db.machines() if m["name"] == purpose), None)
@@ -190,7 +193,7 @@ class FakeFleet:
 
     def sample(self, purpose):
         return {"gpus": [{"util_pct": 97, "mem_used_mib": 20000, "mem_total_mib": 24564}] * 4,
-                "note": "Screening directions on 203.0.113.7; best so far +2.1"}
+                "note": "Screening directions on 203.0.113.7; best so far +2.1", "done": purpose in self.done}
 
 
 class FakeRunner:
@@ -399,7 +402,8 @@ def test_full_flow(tmp_path, capsys):
     gh = orch.d.github
     assert set(gh.tags) == {sid_a, "0000000104-0002", sid_b, "0000000103-0002"}   # every run was locked
     assert gh.merged == [1]                                   # only the champion's PR is merged
-    assert {n for n, _ in gh.comments} == {1, 3, 4}           # decided PRs get a result comment
+    assert {n for n, _ in gh.comments} == {1, 2, 3, 4}        # every finished PR gets its result and is closed
+    assert all(gh.prs[n]["state"] == "closed" for n in (1, 2, 3, 4))
 
     # the miner CLI reads the same public files (no keys)
     reader = miner.PublicReader(store=pub)
@@ -467,9 +471,9 @@ def test_accounts_and_fees(tmp_path):
     assert m["account"]["held_usd"] == RUN_USD - 2 * HOUR / pricing.MUSD and m["run"]["sid"] == sid
     assert m["run"]["note"] == "Screening directions on [redacted]; best so far +2.1"   # the run's secrets removed
     assert [g["util_pct"] for g in m["run"]["gpus"]] == [97] * 4 and m["run"]["sampled_at"] == clock.t
-    for _ in range(2):                                  # idle with a complete upload: two continues, then done
-        clock.t += 300
-        orch.supervise()
+    clock.t += 300
+    orch.d.fleet.done.add(sid)                          # the agent ran axonry-done (a complete upload exists)
+    orch.supervise()
     s = orch.db.sub(sid)
     used = pricing.used_musd(RULES, clock.t - kick)
     assert s["status"] == "COLLECTING" and s["record"]["agent_outcome"] == "finished"
@@ -512,7 +516,7 @@ def test_one_registration_one_entry(tmp_path):
     run_until_quiet(orch, clock)
     assert len(orch.db.subs()) == 1 and orch.db.get("prs")["2"]["reason_code"] == "PARTICIPATED"
     assert "1" not in orch.db.get("prs")                # its own PR is shown with the submission, not again
-    assert orch.db.accounts()[COLDKEYS["A"]]["charged_usd"] == RUN_USD             # one run, to its deadline
+    assert orch.db.accounts()[COLDKEYS["A"]]["charged_usd"] == pricing.gpu_max_musd(RULES) / 1e6   # GPUs to the deadline
 
 
 def test_copy_cannot_overtake_the_original(tmp_path):
@@ -914,7 +918,7 @@ def test_a_vanished_evaluation_machine_is_replaced(tmp_path):
     assert orch.d.fleet.get(EVAL)["state"] == "ready"
 
 
-def test_the_evaluation_machine_is_kept_through_an_upload_grace(tmp_path):
+def test_the_evaluation_machine_is_kept_while_a_run_waits_to_be_collected(tmp_path):
     from axonry.pool.machine import EVAL
     orch, chain, clock, pub = make(tmp_path)
     orch.d.eval_idle_minutes = 1
@@ -926,9 +930,9 @@ def test_the_evaluation_machine_is_kept_through_an_upload_grace(tmp_path):
     open_season(orch, 101)
     orch.schedule()
     clock.t = orch.db.run("0000000101-0001")["task"]["run"]["deadline"]
-    orch.supervise()                                   # deadline: COLLECTING, in its upload grace
+    orch.supervise()                                   # deadline: COLLECTING
     orch.eval_machine()
-    for _ in range(3):                                 # well past eval_idle_minutes, still in the grace
+    for _ in range(3):                                 # well past eval_idle_minutes, still to be collected
         clock.t += 120
         orch.eval_machine()
     assert orch.d.fleet.get(EVAL)["state"] == "ready" and EVAL not in orch.d.fleet.released

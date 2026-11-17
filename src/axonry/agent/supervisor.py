@@ -4,9 +4,10 @@ runner calls, and keeps its memory in `state` (persisted by the orchestrator), s
 - approval cards are always rejected (nobody is there to approve);
 - a finished turn before the deadline gets a "continue" (arbos caps one background job at 60 minutes);
 - no activity for stall_minutes: one nudge, then end early;
-- wrap-up reminder wrap_minutes before the deadline; stop at the deadline;
-- the agent may finish early: idle, a complete upload exists, and it stayed idle after two continues;
-- its cost (run.max_agent_usd, when the backend reports it): a reminder to upload at 80%, stopped at 100%;
+- a reminder at each of run.wrap_minutes before the deadline (stop working, upload the result now); stopped at the
+  deadline;
+- the agent finishes early by saying so (`axonry-done` in the sandbox) once a complete upload exists;
+- its model use (run.max_agent_usd): a reminder to upload at 80%, stopped at 100%;
 - the backend cannot run it (st.error, e.g. the arbos box is held) for stall_minutes: "lost" (ours: the run is
   started again, nothing charged).
 """
@@ -15,8 +16,8 @@ from . import brief
 CONTINUE_MIN_GAP = 300
 
 
-def step(now: int, task: dict, handle, runner, state: dict, has_upload: bool) -> str:
-    """-> "running" | "finished" (deadline or early finish) | "stalled" | "budget" (cost cap) | "lost"."""
+def step(now: int, task: dict, handle, runner, state: dict, has_upload: bool, done: bool = False) -> str:
+    """-> "running" | "finished" (deadline, or the agent said it is done) | "stalled" | "budget" (cost cap) | "lost"."""
     run = task["run"]
     if now >= run["deadline"]:
         runner.stop(handle)
@@ -29,6 +30,9 @@ def step(now: int, task: dict, handle, runner, state: dict, has_upload: bool) ->
             return "lost"
         return "running"
     state.pop("error_since", None)
+    if done and has_upload:
+        runner.stop(handle)
+        return "finished"
     cap = run.get("max_agent_usd")
     if st.usd is not None:
         state["usd"] = st.usd
@@ -41,13 +45,13 @@ def step(now: int, task: dict, handle, runner, state: dict, has_upload: bool) ->
             return "running"
     for a in st.pending_approvals:
         runner.reject(handle, a, "Unattended run: approvals are not available. Continue without this action.")
-    if not state.get("wrapped") and now >= run["deadline"] - run["wrap_minutes"] * 60:
+    due = [m for m in run["wrap_minutes"] if now >= run["deadline"] - m * 60 and m not in state.get("wrapped", [])]
+    if due:
         runner.steer(handle, brief.wrap_message(task, now))
-        state["wrapped"] = True
+        state["wrapped"] = state.get("wrapped", []) + due
         return "running"
     stall = run["stall_minutes"] * 60
     if st.busy:
-        state["idle_continues"] = 0
         if now - st.last_activity >= stall:
             if state.get("stall_nudged_at") and now - state["stall_nudged_at"] >= stall:
                 runner.stop(handle)
@@ -59,10 +63,7 @@ def step(now: int, task: dict, handle, runner, state: dict, has_upload: bool) ->
             state.pop("stall_nudged_at", None)
         return "running"
     state.pop("stall_nudged_at", None)
-    if has_upload and state.get("idle_continues", 0) >= 2:
-        return "finished"
     if now - state.get("last_continue", 0) >= CONTINUE_MIN_GAP:
         runner.steer(handle, brief.continue_message(task, now))
         state["last_continue"] = now
-        state["idle_continues"] = state.get("idle_continues", 0) + 1
     return "running"

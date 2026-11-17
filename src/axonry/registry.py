@@ -186,6 +186,8 @@ def validate(root=ROOT):
             if not (isinstance(run.get("gpus"), int) and run["gpus"] > 0
                     and str(run.get("gpu_model", "")).replace(" ", "").isalnum() and run.get("hours", 0) > 0):
                 errs.append(f"{s}@{r['effective_block']}: run needs gpus, gpu_model, hours")
+            if not (isinstance(run.get("max_agent_usd"), (int, float)) and run["max_agent_usd"] > 0):
+                errs.append(f"{s}@{r['effective_block']}: run.max_agent_usd not set")
             if not str(r["fee"].get("treasury", "")).startswith("5"):
                 errs.append(f"{s}@{r['effective_block']}: fee.treasury not set")
             if not r["review"].get("reviewers"):

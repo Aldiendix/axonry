@@ -211,11 +211,12 @@ def cmd_price(r, network):
     tao_usd, sources = pricing.tao_usd_at(int(time.time()))
     alpha = _alpha_price(network, rules) if "alpha" in rules["fee"]["assets"] else None
     now = {"tao": top / tao_usd, "alpha": top / tao_usd / alpha if alpha else None}
-    print(f"a run: {run['gpus']} x {run['gpu_model']} GPU, at most {run['hours']} h; "
-          f"{rules['fee']['usd_per_gpu_hour']} USD per GPU-hour, "
-          f"so at most {top:.2f} USD.")
-    print("your account must hold that much before review (nothing is charged until the run starts; each full hour "
-          "is charged as it passes and the rest when the run ends).")
+    print(f"a run: {run['gpus']} x {run['gpu_model']} GPU, at most {run['hours']} h at "
+          f"{rules['fee']['usd_per_gpu_hour']} USD per GPU-hour ({pricing.gpu_max_musd(rules) / pricing.MUSD:.2f} USD), "
+          f"plus the agent's model use (at most {run['max_agent_usd']} USD), plus "
+          f"{rules['fee'].get('slippage', 0):.0%}: at most {top:.2f} USD.")
+    print("your account must hold that much before review (nothing is charged until the run starts; each full GPU "
+          "hour is charged as it passes, the rest and the agent's use when the run ends).")
     print("now " + " or ".join(f"{v:.6f} {a}" for a, v in now.items() if v and a in rules["fee"]["assets"])
           + f" (TAO/USD {tao_usd:.2f} from {', '.join(sources)}); a deposit counts in USD at the price of its block.")
 

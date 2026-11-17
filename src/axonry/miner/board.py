@@ -133,8 +133,7 @@ def board(status: dict, matches: dict | None, n=20, color=None) -> str:
         rows.append([uid(w["hotkey"]) if w.get("hotkey") else st("-", DIM), hot(w.get("hotkey")), st("-", DIM),
                      pr(w["pr"], w.get("title")), st(WHY.get(w["reason_code"], w["reason_code"]), DIM),
                      clean(w.get("reason"), 70)])
-    active = ({x["hotkey"] for x in queue} | {c["hotkey"] for c in status.get("contents", [])}
-              | ({champ["hotkey"]} if champ else set()))       # hotkeys that took part (one entry each)
+    active = {m["hotkey"] for m in status.get("miners", []) if m.get("entry")}   # took part (one entry each)
     accounts = status.get("accounts", {})
     for m in status.get("miners", []):
         bal = (accounts.get(m.get("coldkey")) or {}).get("available_usd", 0)

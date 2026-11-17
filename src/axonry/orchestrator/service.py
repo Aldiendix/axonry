@@ -52,7 +52,6 @@ from ..publish import publisher, redact
 from .db import DB
 
 log = logging.getLogger("axonry")
-LIVE_EVERY = 300     # seconds between samples of a running machine (status.json, miners[].run)
 
 def without_secrets(task: dict) -> dict:
     """The task as kept at rest (DB and its snapshots): the sandbox key and the R2 credentials are only ever in the
@@ -108,6 +107,21 @@ class Orchestrator:
         self.db.update(sid, final_status, reason_code=code, reason=detail, decided_at=self.d.clock())
         self._publish_record(sid)
         self._publish_season(self.db.sub(sid)["season"])
+        self._close_pr(sid, f"axonry: submission `{sid}` -> **{final_status} {code}**: {detail[:1000]}")
+
+    def _close_pr(self, sid, text, merge_commit=None):
+        """A finished entry's PR: the result as a comment, a champion's locked commit merged, and the PR closed (an
+        open PR is an entry still in progress: later entries are compared only with those)."""
+        n = self.db.sub(sid)["pr_number"]
+        if not n:
+            return
+        try:
+            self.d.github.comment(n, text)
+            if merge_commit:          # the locked commit itself, whatever the PR head is now
+                self.d.github.merge(merge_commit, f"Champion {sid} (PR #{n})")
+            self.d.github.close(n)
+        except Exception:
+            log.exception("report to PR #%s", n)
 
     # ------------------------------------------------------------------------------------------- intake
     def intake(self):
@@ -379,7 +393,7 @@ class Orchestrator:
         run = rules["run"]
         start = self.now()
         deadline = start + int(run["hours"] * 3600)
-        ttl = deadline - start + run["upload_grace_minutes"] * 60
+        ttl = deadline - start
         private_key, public_key = keypair(f"axonry-{sid}")
         m = self.d.fleet.hand_over(sid, public_key, deadline)
         resources = self.d.fleet.probe(sid)
@@ -446,15 +460,14 @@ class Orchestrator:
             r = self.db.run(sid)
             task, h, st = r["task"], RunHandle(**r["handle"]), r["sup_state"] or {}
             has_upload = self.d.private.last_modified(layout.staging_prefix(sid) + "manifest.json") is not None
+            st["live"] = self._sample(sid)
             try:
-                outcome = supervisor.step(self.now(), task, h, self.d.runner, st, has_upload)
+                outcome = supervisor.step(self.now(), task, h, self.d.runner, st, has_upload, st["live"].get("done"))
             except Exception as e:  # agent backend / network hiccup: retried next tick, forced stop at the deadline
                 log.warning("supervise %s: %s (retrying next tick)", sid, str(e).splitlines()[0][:200])
                 if self.now() < task["run"]["deadline"]:
                     continue
                 outcome = "finished"
-            if outcome == "running" and self.now() - st.get("live", {}).get("at", 0) >= LIVE_EVERY:
-                st["live"] = self._sample(sid)
             self.db.save_run(sid, sup_state=st)
             if outcome == "running":
                 continue
@@ -475,7 +488,7 @@ class Orchestrator:
             except Exception:
                 log.exception("release the machine of %s (retried by schedule)", sid)
             end = self.now()
-            self._bill(s, end=end)
+            self._bill(s, end=end, agent_usd=st.get("usd"))
             self.db.update(sid, "COLLECTING", record_patch={
                 "agent_log": "published" if exported else "unavailable",
                 "agent_outcome": outcome,
@@ -483,23 +496,23 @@ class Orchestrator:
                 "fee": {**s["record"].get("fee", {}), "charged_usd": sum(self.db.charged(sid).values()) / 1e6},
                 "timeline": {**s["record"]["timeline"], "agent_end": end}})
 
-    def _bill(self, s, end=None):
-        """A run is charged one hour's price at each full hour from kickoff; at its end the time actually used is
-        settled (never more than the run's maximum, which the account was holding)."""
+    def _bill(self, s, end=None, agent_usd=None):
+        """A run's GPUs are charged one hour's price at each full hour from kickoff; at its end the GPU time actually
+        used is settled (charge 0) and the agent's model use is charged (charge -1, at most run.max_agent_usd)."""
         rules, kick = self.rules_for(s["sid"]), s["record"]["timeline"]["kickoff"]
         hours = min(int((self.now() - kick) // 3600), int(rules["run"]["hours"]))
         for n in range(1, hours + 1):
             self.db.charge(s["sid"], n, s["coldkey"], pricing.hour_musd(rules))
         if end is not None:
-            rest = pricing.used_musd(rules, end - kick) - sum(v for n, v in self.db.charged(s["sid"]).items() if n)
+            rest = pricing.used_musd(rules, end - kick) - sum(v for n, v in self.db.charged(s["sid"]).items() if n > 0)
             self.db.charge(s["sid"], 0, s["coldkey"], max(rest, 0))
+            self.db.charge(s["sid"], -1, s["coldkey"], pricing.agent_musd(rules, agent_usd))
 
     # ------------------------------------------------------------------------------------------- evaluation machine
     def eval_machine(self):
         """The evaluation machine is rented while admission or evaluation work waits, and released after
         eval_idle_minutes without any."""
         f = self.d.fleet
-        # a run in its upload grace is collected minutes later: its machine is kept (setting one up takes longer)
         work = bool(self.db.subs(status=("COLLECTING", "ADMITTED")))
         if f.get(EVAL) is None:
             if work:
@@ -523,14 +536,6 @@ class Orchestrator:
             f.release(EVAL, "idle")
             self.db.set("eval_idle_since", None)
 
-    def _in_grace(self, s):
-        """Between a run's deadline and the end of its upload grace (an upload started in time may be in flight)."""
-        run = self.db.run(s["sid"])
-        if run is None:                        # the initial champion: no run
-            return False
-        deadline = run["task"]["run"]["deadline"]
-        return deadline <= self.now() < deadline + self.rules_for(s["sid"])["run"]["upload_grace_minutes"] * 60
-
     # ------------------------------------------------------------------------------------------- collect
     def collect(self):
         for s in self.db.subs(status=("COLLECTING",)):
@@ -540,8 +545,6 @@ class Orchestrator:
             if rec.get("initial"):
                 edit = registry.load_initial(rec["initial"], self.d.registry_root)[1]
             else:
-                if self._in_grace(s):
-                    continue
                 deadline = self.db.run(sid)["task"]["run"]["deadline"]
                 try:
                     staging.collect(self.d.private, sid, deadline, Path(self.d.work_dir) / sid / "upload",
@@ -751,10 +754,12 @@ class Orchestrator:
         self._publish_record(sid)
         if cmp["dominates"]:
             self.db.add_champion(season, sid, s["hotkey"], head, {"reference": ref_id, "wins": cmp["wins"]})
+        self._close_pr(sid, f"axonry: submission `{sid}` -> **{decision}** ({cmp['wins']} wins, not worse on all: "
+                            f"{cmp['tie_all']}). Details: `axonry-miner show {sid}`.",
+                       (rec.get("pr") or {}).get("locked_commit") if cmp["dominates"] else None)
         self._publish_season(season)
         if cmp["dominates"]:
             self.publish_weights()
-        self._report_to_pr(sid, rec, decision, cmp)
 
     def _crown_initial(self, s, rules, params, head):
         """The initial champion takes the title without a match; its scores are published as they are."""
@@ -785,20 +790,6 @@ class Orchestrator:
         self._publish_season(s["season"])
         if was_champion:
             self.publish_weights()
-
-    def _report_to_pr(self, sid, rec, decision, cmp):
-        """Comment the result on the PR; merge the new champion at its locked commit (the public record)."""
-        pr = rec.get("pr") or {}
-        if not pr.get("number"):
-            return
-        try:
-            self.d.github.comment(pr["number"], f"axonry: submission `{sid}` -> **{decision}** "
-                                                f"({cmp['wins']} wins, not worse on all: {cmp['tie_all']}). "
-                                                f"Details: `axonry-miner show {sid}`.")
-            if decision == "NEW_CHAMPION":     # the locked commit itself, whatever the PR head is now
-                self.d.github.merge(pr["locked_commit"], f"Champion {sid} (PR #{pr['number']})")
-        except Exception:
-            log.exception("report to PR #%s", pr["number"])
 
     # ------------------------------------------------------------------------------------------- publication
     def _publish_record(self, sid):
@@ -846,7 +837,8 @@ class Orchestrator:
         if champ and champ["hotkey"]:          # the initial champion has none: its weight is burned (uid0)
             uid = self.d.chain.uid_of(champ["hotkey"], rules["netuid"])
             info = {"sid": champ["sid"], "hotkey": champ["hotkey"], "uid": uid}
-        seq = self.db.get("weights_sequence", 0) + 1
+        published = json.loads(self.d.public.get(layout.WEIGHTS) or "{}").get("sequence", 0)
+        seq = max(self.db.get("weights_sequence", 0), published) + 1     # a restored state DB may lag behind
         doc = publisher.build_weights(rules["netuid"], season, info, seq, head)
         publisher.publish_weights(self.d.public, doc, self.d.owner_keypair)
         self.db.set("weights_sequence", seq)
@@ -929,9 +921,10 @@ class Orchestrator:
         return {**live, "at": self.now()}
 
     def _miners(self, netuid, accounts):
-        """Who is registered right now, with what a miner's page shows: [{uid, hotkey, coldkey, account (its coldkey's
-        balance), run (its run in progress: deadline, the agent's one-line status, each GPU's use, sampled_at; None
-        when it has none)}] (owners cached; a hotkey's owner does not change)."""
+        """Who is registered right now, with what a miner's page shows: [{uid, hotkey, coldkey, entry (the sid of its
+        one entry, None before it commits), account (its coldkey's balance), run (its run in progress: deadline, the
+        agent's one-line status, each GPU's use, sampled_at; None when it has none)}] (owners cached; a hotkey's
+        owner does not change)."""
         owners = self.__dict__.setdefault("_owners", {})
         runs = {}
         for s in self.db.subs(status=("RUNNING",)):
@@ -943,18 +936,21 @@ class Orchestrator:
         for uid, hk in sorted(self.d.chain.uid_hotkeys(netuid).items()):
             if hk not in owners:
                 owners[hk] = self.d.chain.owner_of(hk, None)
-            out.append({"uid": uid, "hotkey": hk, "coldkey": owners[hk], "account": accounts.get(owners[hk]),
-                        "run": runs.get(hk)})
+            entry = self.db.of_hotkey(hk)
+            out.append({"uid": uid, "hotkey": hk, "coldkey": owners[hk], "entry": entry and entry["sid"],
+                        "account": accounts.get(owners[hk]), "run": runs.get(hk)})
         return out
 
     def _contents(self):
-        """Every submission whose content is public (a PR carried it), in priority order, any status: a reviewer
-        compares an item with every earlier one (originality, review/PROTOCOL.md)."""
+        """Every submission still in progress whose content a PR has made public (its PR is open), in priority order:
+        a reviewer compares an item with every earlier one of these (originality, review/PROTOCOL.md). A finished
+        entry's method is free to build on."""
         return [{"sid": s["sid"], "hotkey": s["hotkey"], "pr": s["pr_number"], "status": s["status"],
                  "commit": s["locked_commit"] or s["head_sha"],
                  "directory": (s["record"].get("pr") or {}).get("directory"),
                  "priority": [s["prio_block"], s["prio_index"]]}
-                for s in sorted(self.db.subs(), key=self.priority) if s["pr_number"]]
+                for s in sorted(self.db.subs(), key=self.priority)
+                if s["pr_number"] and s["status"] not in ("PUBLISHED", "REJECTED", "FAILED", "DISQUALIFIED")]
 
     def janitor(self, every=3600, keep_snapshots=48):
         """Hourly: staging uploads of finished submissions (their edit is published; nothing in the private bucket

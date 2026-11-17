@@ -90,13 +90,15 @@ def test_parse_alpha_deposit():
     assert d.asset == "alpha" and d.amount_rao == 3
 
 
-def test_deposits_count_in_usd_and_a_run_by_the_gpu_hour():
+def test_deposits_count_in_usd_and_a_run_by_gpu_hours_and_agent_use():
     assert pricing.deposit_musd(10**8, "tao", 500.0) == 50 * pricing.MUSD               # 0.1 TAO at 500 USD
     assert pricing.deposit_musd(10**10, "alpha", 500.0, alpha_tao=0.01) == 50 * pricing.MUSD
-    rules = {"fee": {"usd_per_gpu_hour": 2}, "run": {"gpus": 2, "hours": 8}}
-    assert pricing.hour_musd(rules) == 4 * pricing.MUSD and pricing.run_cost_musd(rules) == 32 * pricing.MUSD
-    assert pricing.used_musd(rules, 5400) == 6 * pricing.MUSD                            # 1.5 h
-    assert pricing.used_musd(rules, 10 * 3600) == 32 * pricing.MUSD                      # never more than the maximum
+    rules = {"fee": {"usd_per_gpu_hour": 2, "slippage": 0.02}, "run": {"gpus": 4, "hours": 6, "max_agent_usd": 50}}
+    assert pricing.hour_musd(rules) == 8 * pricing.MUSD
+    assert pricing.run_cost_musd(rules) == 99_960_000                  # (48 GPU + 50 agent) USD + 2%: what is held
+    assert pricing.used_musd(rules, 5400) == 12 * pricing.MUSD                           # 1.5 h of GPUs
+    assert pricing.used_musd(rules, 10 * 3600) == 48 * pricing.MUSD                      # never more than 6 h
+    assert pricing.agent_musd(rules, 12.5) == 12_500_000 and pricing.agent_musd(rules, 80) == 50 * pricing.MUSD
 
 
 def test_tao_usd_median_and_spread():

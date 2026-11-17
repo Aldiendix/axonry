@@ -113,7 +113,8 @@ class DB:
                        (usd, json.dumps(price), block, idx, asset))
 
     def charge(self, sid, n, coldkey, usd: int):
-        """Charge n of a run (n = 1, 2, ... for each full hour; 0 for the settlement at its end); once each."""
+        """Charge n of a run (n = 1, 2, ... for each full GPU hour; 0 settles the GPU time at its end; -1 is its agent's
+        model use); once each."""
         self.c.execute("INSERT OR IGNORE INTO charges VALUES(?,?,?,?,?)", (sid, n, coldkey, usd, time.time()))
 
     def refund(self, sid):

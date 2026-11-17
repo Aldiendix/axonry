@@ -1,8 +1,7 @@
 """Collect a run's upload from the private bucket (the competition protocol's upload section).
 
 The final result is the manifest present at the deadline: its listed files must all exist with matching sha256
-and size, be exactly the protocol files (competition rules: upload.files), and fit the size cap. Objects written after the deadline are ignored (the grace
-period only lets an upload in flight finish; a manifest written in it does not count).
+and size, be exactly the protocol files (competition rules: upload.files), and fit the size cap. Anything written after the deadline does not count.
 """
 import json
 from pathlib import Path

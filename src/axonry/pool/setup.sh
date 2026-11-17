@@ -26,7 +26,7 @@ chmod -R go-w /usr/share/nltk_data
 NLTK_DATA=/usr/share/nltk_data python3 -c "import nltk; nltk.data.find('tokenizers/punkt_tab/english/')"
 pip install -q --no-cache-dir --no-deps "$B/axonry.tar.gz"
 command -v python >/dev/null || ln -s "$(command -v python3)" /usr/local/bin/python   # the image has python3 only
-for t in time check; do
+for t in time check done; do
   printf '#!/bin/sh\nexec python3 -m axonry.sandbox_tools %s "$@"\n' $t > /usr/local/bin/axonry-$t
   chmod 755 /usr/local/bin/axonry-$t
 done

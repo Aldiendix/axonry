@@ -1,7 +1,9 @@
-"""Fees: a run is paid by the GPU hour, from a virtual account kept in USD.
+"""Fees: a run pays its GPU hours and its agent's model use, from a virtual account kept in USD.
 
 An account is the sum of a coldkey's deposits to the treasury, each converted to USD at its own moment (TAO/USD at
 the deposit's block time; alpha through the subnet's alpha price at the deposit's block), minus the run charges.
+Before review the account must cover a run's maximum: every GPU hour up to the deadline plus the agent budget
+(run.max_agent_usd), plus fee.slippage on top.
 alpha price (TAO per alpha) comes from chain state (exact, reproducible).
 TAO/USD has no on-chain source: median of the external sources that answer (>= 2); refuse when they disagree.
 Amounts are integer micro-USD.
@@ -38,14 +40,28 @@ def hour_musd(rules) -> int:
     return int(round(rules["fee"]["usd_per_gpu_hour"] * rules["run"]["gpus"] * MUSD))
 
 
-def run_cost_musd(rules) -> int:
-    """The most a run can cost: every hour up to the deadline. The account must cover it before review."""
+def gpu_max_musd(rules) -> int:
+    """Every GPU hour up to the deadline."""
     return int(round(hour_musd(rules) * rules["run"]["hours"]))
 
 
+def agent_max_musd(rules) -> int:
+    return int(round(rules["run"]["max_agent_usd"] * MUSD))
+
+
+def run_cost_musd(rules) -> int:
+    """What a run holds from its account until it ends: its GPU hours and agent budget, plus fee.slippage."""
+    return int(round((gpu_max_musd(rules) + agent_max_musd(rules)) * (1 + rules["fee"].get("slippage", 0))))
+
+
 def used_musd(rules, seconds: float) -> int:
-    """The charge for a run of this length (capped at the maximum)."""
-    return min(int(hour_musd(rules) * max(seconds, 0) / 3600), run_cost_musd(rules))
+    """The GPU charge for a run of this length (capped at every hour up to the deadline)."""
+    return min(int(hour_musd(rules) * max(seconds, 0) / 3600), gpu_max_musd(rules))
+
+
+def agent_musd(rules, usd: float | None) -> int:
+    """The agent charge: what its model use cost, capped at the agent budget."""
+    return min(int(max(usd or 0, 0) * MUSD), agent_max_musd(rules))
 
 
 # ---- TAO/USD sources ------------------------------------------------------------------------------------------

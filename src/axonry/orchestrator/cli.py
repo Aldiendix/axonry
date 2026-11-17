@@ -129,7 +129,7 @@ def deps(cfg: Config, db, rules, comp_rules, **parts):
         "db": db, "fleet": fl, "runner": runner, "executor": eval_executor(cfg, fl), "issue_creds": issue,
         "private": private_store(cfg), "comp_rules": comp_rules, "price_at": cached_price(),
         "work_dir": cfg.path_of("state.work_dir"),
-        "max_concurrent": min(int(cfg.get("machines.max_runs", 16)), runner.capacity),
+        "max_concurrent": runner.capacity,          # runs at once: the agent accounts' room (machines: vast.max_gpus)
         "eval_gpu_name": cfg.get("machines.eval_gpu_name", "RTX 4090"), "eval_gpus": int(cfg.get("machines.eval_gpus", 8)),
         "eval_idle_minutes": int(cfg.get("machines.eval_idle_minutes", 20)), **parts})
 

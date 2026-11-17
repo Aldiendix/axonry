@@ -17,7 +17,8 @@ its weight to the best model.
    is always decided after the original.
 3. A reviewer checks, in priority order, that the method is a real weight-editing method, that everything in it
    serves an honest edit (no outside weights, benchmark overfitting or attacks), and that it differs in
-   substance from every method committed before it by other miners. The verdict is posted on the pull request;
+   substance from every method of other miners committed before it and still in progress (a finished entry's
+   method is free to build on). The verdict is posted on the pull request;
    once approved, the pull request is locked at that commit and the entry is queued.
 4. When its turn comes, an AI agent carries out the method for a fixed time on its own GPU machine (set up for
    that run alone, destroyed after it). It delivers an **edit**: a small, declarative change to the base weights. Fitting the
@@ -40,8 +41,10 @@ entry**: a hotkey takes part once, with the content of its first commitment; to 
 Losing the registration after committing does not stop the entry; it only means no weight while deregistered (a
 deregistered champion's weight is burned until it registers again).
 
-**Fees.** You pay for your run's GPU time. The season's rules publish the GPU model, the number of GPUs, the
-maximum run time and the price per GPU-hour, so the most a run can cost is known in advance (`axonry-miner price`).
+**Fees.** You pay for your run's GPU time and its agent's model use. The season's rules publish the GPU model, the
+number of GPUs, the maximum run time, the price per GPU-hour and the agent budget, so the most a run can cost is known
+in advance (`axonry-miner price`): every GPU hour up to the deadline plus the agent budget, plus a small margin
+(`fee.slippage`).
 
 - Fund the account of **the coldkey that owns the hotkey**: transfer TAO (or alpha of this subnet) from that coldkey
   to the subnet owner's coldkey, any amount, at any time, as often as you like. Each transfer is credited in USD at
@@ -49,11 +52,12 @@ maximum run time and the price per GPU-hour, so the most a run can cost is known
   account pays for all of the coldkey's hotkeys; a transfer from any other coldkey does not count for your hotkey.
   Only plain transfers signed by the coldkey count (as made by `axonry-miner deposit`), not transfers through a
   proxy or multisig.
-- Your entry is reviewed once the account covers a whole run (the maximum cost), besides what its other queued or
-  running entries still hold. Nothing is charged before the run: a rejected review costs nothing (the hotkey's
+- Your entry is reviewed once the account covers a whole run (the maximum cost above), besides what its other
+  queued or running entries still hold. Nothing is charged before the run: a rejected review costs nothing (the hotkey's
   entry is spent all the same).
-- During the run, each full hour is charged as it passes; when the run ends (deadline or early finish), the
-  time actually used is settled. A run that ends early costs less; what is left stays in the account. The clock
+- During the run, each full GPU hour is charged as it passes; when the run ends (at the deadline, or when the
+  agent says it is done), the GPU time actually used is settled and the agent's model use is charged (never more
+  than the agent budget). A run that ends early costs less; what is left stays in the account. The clock
   starts when the run's machine is ready; if the machine fails during the run, the run starts again from the
   beginning on a new one and nothing of the failed attempt is charged.
 - The account is virtual: the subnet keeps no wallet for you; it is computed from your transfers on chain and the

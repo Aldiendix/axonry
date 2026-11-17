@@ -6,7 +6,7 @@ from axonry.agent.arbos import ArbosError, ArbosRunner, busy
 from axonry.agent.base import RunHandle, RunStatus
 
 T0 = 1_800_000_000
-TASK = {"sid": "s1", "run": {"start": T0, "deadline": T0 + 8 * 3600, "wrap_minutes": 30, "stall_minutes": 20,
+TASK = {"sid": "s1", "run": {"start": T0, "deadline": T0 + 6 * 3600, "wrap_minutes": [30, 10], "stall_minutes": 20,
                              "max_agent_usd": 10}}
 
 
@@ -52,7 +52,7 @@ def test_the_agent_cost_cap():
 
 def test_no_cost_report_means_no_cap():
     b, st = Backend(), {}
-    b.status = RunStatus(True, T0, usd=None)                          # the relay does not report session usage yet
+    b.status = RunStatus(True, T0, usd=None)                          # arbos could not be read just now
     assert supervisor.step(T0 + 600, TASK, None, b, st, False) == "running" and "usd" not in st
 
 
@@ -65,6 +65,32 @@ def test_a_backend_that_cannot_run_the_agent_loses_the_run():
     b.status = RunStatus(False, T0, error="held")
     supervisor.step(T0 + 180, TASK, None, b, st, False)
     assert supervisor.step(T0 + 180 + 20 * 60, TASK, None, b, st, False) == "lost" and b.stopped
+
+
+def test_reminders_before_the_deadline_and_finishing_when_the_agent_says_so():
+    b, st, dl = Backend(), {}, TASK["run"]["deadline"]
+    b.status = RunStatus(True, dl)                                    # busy, active just now
+    assert supervisor.step(dl - 31 * 60, TASK, None, b, st, True) == "running" and b.sent == []
+    supervisor.step(dl - 30 * 60, TASK, None, b, st, True)
+    supervisor.step(dl - 20 * 60, TASK, None, b, st, True)
+    supervisor.step(dl - 10 * 60, TASK, None, b, st, True)
+    assert len(b.sent) == 2 and all("Stop all other work" in m for m in b.sent)       # 30 and 10 minutes before
+    b.status = RunStatus(False, T0)                                   # idle with an upload: it goes on
+    assert supervisor.step(dl - 9 * 60, TASK, None, b, st, True) == "running" and not b.stopped
+    assert supervisor.step(dl - 8 * 60, TASK, None, b, st, False, done=True) == "running"   # done, nothing uploaded
+    assert supervisor.step(dl - 7 * 60, TASK, None, b, st, True, done=True) == "finished" and b.stopped
+
+
+def test_the_agent_cost_is_its_projects_use_since_kickoff():
+    use = {"usd": 3.0}
+
+    def run(account, args, timeout):
+        return 0, json.dumps({"all": dict(use), "today": dict(use)}), ""
+    r = ArbosRunner({"a": 1}, runner=run)
+    h = RunHandle("s1", "p", "c", {"account": "a"})
+    r.kickoff(h, "go", "bundle.tgz")                                   # a run lost before used 3.0 of this project
+    use["usd"] = 7.5
+    assert r.cost(h) == 4.5
 
 
 def test_a_held_arbos_account_takes_no_run():

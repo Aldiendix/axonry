@@ -172,6 +172,7 @@ class ArbosRunner:
         return RunHandle(sid, project, chat, {"account": account})
 
     def kickoff(self, h, message, bundle: Path):
+        h.data["usd_base"] = self._project_usd(h)      # the project's use before this run (e.g. a run lost before)
         self.ctl(h.data["account"], "chat", "send", h.workspace, h.chat, BACKGROUND + message, "--attach", str(bundle),
                  "--timeout", "120", timeout=300)
         h.data["kickoff_at"] = time.time()
@@ -191,17 +192,19 @@ class ArbosRunner:
         last = max((_ts(m) for m in msgs), default=0.0) or h.data.get("kickoff_at", 0.0)
         return RunStatus(busy(doc), last, pending_approvals(doc), self._held(account), self.cost(h))
 
+    def _project_usd(self, h) -> float:
+        """All-time USD of the run's project (one per hotkey, and a hotkey has one entry)."""
+        usd = (self._json(h.data["account"], "usage", h.workspace, timeout=120).get("all") or {}).get("usd")
+        if not isinstance(usd, (int, float)):
+            raise ArbosError(f"no usage reported for project {h.workspace}")
+        return float(usd)
+
     def cost(self, h) -> float | None:
-        """USD spent by the run's agent session (its chat) and the workers it started; None while the relay does not
-        report session usage (arbos PR 3024)."""
+        """USD of this run's agent: its project's use since kickoff; None when arbos cannot be read just now."""
         try:
-            out = self._json(h.data["account"], "usage", h.workspace, "--session", h.chat, "--include-children",
-                             timeout=120)
+            return self._project_usd(h) - h.data.get("usd_base", 0.0)
         except (ArbosError, ValueError):
             return None
-        rows = out if isinstance(out, list) else out.get("sessions") or [out]
-        usd = (rows[0] if rows else {}).get("usd")      # reported cost plus estimates: what the cap counts
-        return float(usd) if isinstance(usd, (int, float)) else None
 
     def steer(self, h, message):
         self.ctl(h.data["account"], "chat", "send", h.workspace, h.chat, BACKGROUND + message, "--timeout", "120",

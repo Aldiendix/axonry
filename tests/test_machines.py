@@ -203,16 +203,17 @@ def test_a_state_snapshot_holds_what_is_still_in_the_wal(tmp_path):
     assert DB(tmp_path / "copy.sqlite").get("cursor") == 123
 
 
-def test_sample_parses_gpus_and_status_line(monkeypatch):
+def test_sample_parses_gpus_status_line_and_done(monkeypatch):
     from axonry.pool import machine
-    out = "97, 20000, 24564\n0, 3, 24564\n---\n\n# Status: " + " ".join(f"w{i}" for i in range(30)) + "\nmore\n"
+    out = "97, 20000, 24564\n0, 3, 24564\n---\n---\n\n# Status: " + " ".join(f"w{i}" for i in range(30)) + "\nmore\n"
     monkeypatch.setattr(machine, "ssh", lambda *a, **k: out)
     got = machine.sample(None, None)
     assert got["gpus"] == [{"util_pct": 97, "mem_used_mib": 20000, "mem_total_mib": 24564},
                            {"util_pct": 0, "mem_used_mib": 3, "mem_total_mib": 24564}]
-    assert got["note"] == " ".join(f"w{i}" for i in range(20))
-    monkeypatch.setattr(machine, "ssh", lambda *a, **k: "5, 1, 2\n---\n")
-    assert machine.sample(None, None)["note"] is None
+    assert got["note"] == " ".join(f"w{i}" for i in range(20)) and got["done"] is False
+    monkeypatch.setattr(machine, "ssh", lambda *a, **k: "5, 1, 2\n---\ndone\n---\n")
+    got = machine.sample(None, None)
+    assert got["note"] is None and got["done"] is True
 
 
 def test_offers_leave_out_hosts_vast_deverified():

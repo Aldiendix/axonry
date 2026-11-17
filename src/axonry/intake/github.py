@@ -34,7 +34,7 @@ class PRCandidate:
 class GitHub:
     def __init__(self, repo: str, token: str | None = None, api: str = API, branch: str = "master"):
         self.repo, self.token, self.api, self.branch = repo, token, api, branch
-        self._digest_cache, self._files_cache = {}, {}
+        self._digest_cache, self._files_cache, self._blobs_cache = {}, {}, {}
 
     def _get(self, path, raw=False, method="GET", body=None):
         req = urllib.request.Request(self.api + path, method=method,
@@ -107,6 +107,9 @@ class GitHub:
         return self._get(f"/repos/{self.repo}/pulls/{number}/reviews", method="POST",
                          body={"commit_id": commit, "event": event, "body": body})
 
+    def close(self, number: int):
+        return self._get(f"/repos/{self.repo}/pulls/{number}", method="PATCH", body={"state": "closed"})
+
     def comment(self, number: int, text: str):
         return self._get(f"/repos/{self.repo}/issues/{number}/comments", method="POST", body={"body": text})
 
@@ -117,7 +120,16 @@ class GitHub:
         return [f["filename"] for f in self._pages(f"/repos/{self.repo}/pulls/{number}/files")]
 
     def dir_blobs(self, commit, directory):
-        """{relative path: bytes} of every file under `directory` at `commit`."""
+        """{relative path: bytes} of every file under `directory` at `commit` (a commit's content never changes:
+        cached)."""
+        key = (commit, directory)
+        if key not in self._blobs_cache:
+            self._blobs_cache[key] = self._dir_blobs(commit, directory)
+            while len(self._blobs_cache) > 256:          # submissions are small; keep the recent ones
+                self._blobs_cache.pop(next(iter(self._blobs_cache)))
+        return self._blobs_cache[key]
+
+    def _dir_blobs(self, commit, directory):
         tree = self._get(f"/repos/{self.repo}/git/trees/{commit}?recursive=1")
         if tree.get("truncated"):
             raise RuntimeError(f"tree of {commit} truncated")

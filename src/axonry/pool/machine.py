@@ -109,16 +109,18 @@ def ssh(m: Machine, key, command: str, timeout=900, attempts=3, binary=False):
 
 
 def sample(m: Machine, key) -> dict:
-    """A run's machine at a glance (public status): each GPU's use, and the agent's one-line status (the first line of
-    its PROGRESS.md, at most 20 words; None before it writes one)."""
+    """A run's machine at a glance: each GPU's use and the agent's one-line status (the first line of its PROGRESS.md,
+    at most 20 words; None before it writes one), both public; done: the agent ran axonry-done."""
     out = ssh(m, key, "nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits;"
-              " echo ---; head -c 2000 /workspace/work/PROGRESS.md 2>/dev/null || true", timeout=60, attempts=1)
-    gpus_out, _, progress = out.partition("---\n")
+              " echo ---; test -f /workspace/work/DONE && echo done; echo ---;"
+              " head -c 2000 /workspace/work/PROGRESS.md 2>/dev/null || true", timeout=20, attempts=1)
+    gpus_out, _, rest = out.partition("---\n")
+    flag, _, progress = rest.partition("---\n")
     gpus = [dict(zip(("util_pct", "mem_used_mib", "mem_total_mib"), map(int, line.split(","))))
             for line in gpus_out.splitlines() if line.strip()]
     line = next((x for x in progress.splitlines() if x.strip()), "")
     line = re.sub(r"^(status:)\s*", "", line.strip().lstrip("#*->` ").strip(), flags=re.I)
-    return {"gpus": gpus, "note": " ".join(line.split()[:20])[:200] or None}
+    return {"gpus": gpus, "note": " ".join(line.split()[:20])[:200] or None, "done": flag.strip() == "done"}
 
 
 def scp(m: Machine, key, srcs, dst: str, timeout=1800, attempts=3):

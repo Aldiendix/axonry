@@ -2,6 +2,7 @@
 
   axonry-time                      time left until the run's deadline (/etc/axonry-deadline, written when the
                                    machine is handed to the run)
+  axonry-done                      the agent is finished (a complete result is uploaded): the run ends early
   axonry-check OUT_DIR --task task.json   the organizer's admission check on OUT_DIR (edit.json, edit.npz, REPORT.md);
                                    a stacked edit is checked on the parent chain (--parent, default parent/edit
                                    beside task.json)
@@ -21,6 +22,14 @@ def time_left(_a):
     left = dl - int(time.time())
     print(f"{max(left, 0) // 3600} h {max(left, 0) % 3600 // 60} min left (deadline "
           f"{time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime(dl))})" if dl else "no deadline set on this machine")
+
+
+DONE = Path("/workspace/work/DONE")      # read by the organizer (pool.machine.sample)
+
+
+def done(_a):
+    DONE.write_text(f"{int(time.time())}\n")
+    print("noted: the run ends within a minute, if a complete result is uploaded (otherwise it goes on)")
 
 
 def check(a):
@@ -51,17 +60,18 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog=prog)
     sub = ap.add_subparsers(dest="cmd")
     sub.add_parser("time")
+    sub.add_parser("done")
     c = sub.add_parser("check")
     c.add_argument("out_dir")
     c.add_argument("--task", default="task.json")
     c.add_argument("--parent", help="the parent edit directory (default: parent/edit beside task.json)")
     c.add_argument("--base-dir", default="/workspace/base")  # the verified base, read-only
     argv = list(sys.argv[1:] if argv is None else argv)
-    alias = {"axonry-time": "time", "axonry-check": "check"}.get(prog)
+    alias = {"axonry-time": "time", "axonry-done": "done", "axonry-check": "check"}.get(prog)
     if alias:
         argv = [alias, *argv]
     a = ap.parse_args(argv)
-    return {"time": time_left, "check": check}[a.cmd](a) or 0
+    return {"time": time_left, "done": done, "check": check}[a.cmd](a) or 0
 
 
 if __name__ == "__main__":

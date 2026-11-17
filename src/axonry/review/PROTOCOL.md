@@ -39,7 +39,8 @@ content yet:
 1. Fetch the directory at the listed `commit`; its digest must equal the listed `content_digest` (else skip: the
    status is stale).
 2. Build a workspace: `submission/` and `earlier/` = every entry of `status.json` `contents` with an earlier
-   priority (every submission whose content a PR has made public, any status).
+   priority (every submission still in progress whose content a PR has made public; a finished entry's PR is
+   closed, and its method is free to build on).
 3. Run the model on `POLICY.md` in a read-only sandbox without network and without any token in its environment.
    It answers three checks - **substantive**, **conduct**, **original** - in `verdict.schema.json`.
 4. Post one GitHub review bound to that commit: `APPROVE` when all three pass, otherwise `REQUEST_CHANGES` with
@@ -47,7 +48,7 @@ content yet:
 
 An item whose review fails three times (model error, malformed verdict) is skipped and left to a human, who uses
 `axonry-review show/approve/changes`. Review follows priority but does not wait for an earlier item that is not
-reviewable (no PR, no funds): copies are caught by comparing with all earlier public content, and decisions are
+reviewable (no PR, no funds): copies are caught by comparing with all earlier content still in progress, and decisions are
 ordered by priority regardless (sections 3-4).
 
 ## 3. Lock and queue (orchestrator)
@@ -67,8 +68,10 @@ From the lock on, pushes to the PR never affect the entry.
 
 - `QUEUED` submissions get a GPU machine each in priority order (up to the concurrency limit) and start when it is
   ready; several run at once and may finish in any order.
-- A run is charged by the GPU-hour: one hour's price at each full hour from its start, and at its end (deadline
-  or early finish) the time actually used, never more than the maximum its account was holding.
+- A finished entry (rejected, failed or decided) gets its result as a comment on its PR, which is then closed.
+- A run is charged for its GPUs by the hour (one hour's price at each full hour from its start, and at its end -
+  the deadline, or the agent's `axonry-done` - the time actually used) and, at its end, for its agent's model use
+  (at most the agent budget); never more than its account was holding.
 - Decisions do not follow finishing order. Each season is walked in priority order: a scored submission is judged
   against the champion of that moment, and the walk stops at the first earlier submission still in review, queued,
   running or being evaluated. A later commitment - a copy that slipped through, or a lucky run - is never judged

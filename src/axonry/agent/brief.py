@@ -65,10 +65,14 @@ the parent unchanged, improves nothing.
 ## Time
 - Start: {_fmt_ts(run['start'])}
 - **Deadline: {_fmt_ts(run['deadline'])}** ({(run['deadline'] - run['start']) // 3600} h). Anything uploaded later is ignored.
-- Wrap-up reminder at {_fmt_ts(run['deadline'] - run['wrap_minutes'] * 60)}. `axonry-time` in the sandbox prints the time left.
+- Reminders {' and '.join(f"{m} min" for m in run['wrap_minutes'])} before the deadline: then stop all other work and upload
+  your best result. `axonry-time` in the sandbox prints the time left.
 - One background job of yours lasts at most 60 minutes; you are then asked to continue from the sandbox's PROGRESS.md. Run long GPU
   work detached in the sandbox (`tmux` or `nohup`), so it keeps running when a job ends, and check on it later.{budget}
 - Upload an intermediate result early and re-upload improvements: the last complete upload before the deadline counts.
+  An upload still in progress at the deadline does not count, and may spoil the one before it.
+- Finished early (a complete result uploaded, nothing left worth trying)? Run `axonry-done` in the sandbox: the run
+  ends then, and its GPU time is charged only up to that moment.
 
 ## Machine (one sandbox, exclusive to you until the deadline)
 - Connect once with `bash ssh/install.sh` (from this bundle), then always `ssh -F ~/.axonry/ssh/config sandbox`
@@ -151,8 +155,9 @@ def continue_message(task: dict, now: int) -> str:
 
 def wrap_message(task: dict, now: int) -> str:
     left = max(task["run"]["deadline"] - now, 0)
-    return (f"{left // 60} minutes left. Stop exploring: run axonry-check (--task task.json) on your best result and upload it now "
-            "(python -m wsp.upload ... --task task.json), with an up-to-date REPORT.md.")
+    return (f"{left // 60} minutes left until the deadline. Stop all other work now: run axonry-check (--task task.json) "
+            "on your best result and upload it (python -m wsp.upload ... --task task.json) with an up-to-date REPORT.md. "
+            "An upload still in progress at the deadline does not count.")
 
 
 def budget_message(task: dict, usd: float) -> str:
