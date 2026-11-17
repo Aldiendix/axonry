@@ -406,15 +406,19 @@ def test_full_flow(tmp_path, capsys):
     assert all(gh.prs[n]["state"] == "closed" for n in (1, 2, 3, 4))
 
     # the miner CLI reads the same public files (no keys)
+    from axonry.miner.board import cmd_board
     reader = miner.PublicReader(store=pub)
-    miner.cmd_matches(reader, season="s1", hotkey=None, status=None)
+    orch.db.set("status_at", 0)
+    orch.publish_status()
+    cmd_board(reader, color=False)
     out = capsys.readouterr().out
-    assert sid_b in out and "REJECTED_RULES" in out and "NEW_CHAMPION" in out
-    miner.cmd_show(reader, sid_b)
+    assert sid_a in out and "NEW CHAMPION" in out
+    cmd_board(reader, color=False, miner=sid_b)
     out = capsys.readouterr().out
-    assert "relative change 0.312 > 0.25" in out
-    miner.cmd_show(reader, sid_a)
-    assert "win" in capsys.readouterr().out
+    assert "REJECTED_RULES" in out and "relative change 0.312 > 0.25" in out
+    cmd_board(reader, color=False, miner=sid_a)
+    out = capsys.readouterr().out
+    assert "NEW_CHAMPION" in out and "win" in out and "ACCOUNT" in out
 
     # nothing secret at rest, nothing left in the private bucket once tickets are finished
     task = orch.db.run(sid_a)["task"]
@@ -471,6 +475,12 @@ def test_accounts_and_fees(tmp_path):
     assert m["account"]["held_usd"] == RUN_USD - 2 * HOUR / pricing.MUSD and m["run"]["sid"] == sid
     assert m["run"]["note"] == "Screening directions on [redacted]; best so far +2.1"   # the run's secrets removed
     assert [g["util_pct"] for g in m["run"]["gpus"]] == [97] * 4 and m["run"]["sampled_at"] == clock.t
+    from axonry.miner.board import board, detail
+    reader = miner.PublicReader(store=pub)
+    st_doc = reader.get(layout.STATUS)
+    assert "GPU 97%" in board(st_doc, None, color=False)                       # the overview: the run live
+    text = detail(reader, st_doc, None, str(m["uid"]), color=False)            # one miner in full
+    assert "RUN (live" in text and "GPU 3" in text and " 97%" in text and "best so far +2.1" in text
     clock.t += 300
     orch.d.fleet.done.add(sid)                          # the agent ran axonry-done (a complete upload exists)
     orch.supervise()

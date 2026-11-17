@@ -72,9 +72,9 @@ in advance (`axonry-miner price`): every GPU hour up to the deadline plus the ag
    toolkit to try your idea first.
 3. **Fund the account of your hotkey's coldkey.**
    ```
-   axonry-miner price                                      # the most a run costs, in TAO / alpha now
+   axonry-miner price                                      # the most a run costs, in USD and TAO / alpha now
    axonry-miner deposit --amount <TAO> --wallet <wallet> --hotkey <hotkey>   # checks the wallet's coldkey owns it
-   axonry-miner balance <your coldkey>
+   axonry-miner board <your coldkey>                       # your account: deposits, charged, held, available
    ```
 4. **Commit the content, then open the pull request** with exactly that directory. This is your hotkey's one
    entry: check the directory first. Commit *before* you push, and push only after the command returns.
@@ -91,11 +91,10 @@ in advance (`axonry-miner price`): every GPU hour up to the deadline plus the ag
    second commitment of the hotkey is ignored).
 6. **Follow your submission.**
    ```
-   axonry-miner board          # champion and queue / not in queue and why / recent matches with thresholds
+   axonry-miner board              # champion and queue (runs live) / not in queue and why / recent matches
    axonry-miner board --watch 60   # the same, redrawn every minute (the subnet updates it about once a minute)
-   axonry-miner matches        # every submission of the season and its outcome
-   axonry-miner show <id>      # the full record: charges, admission, scores per benchmark, decision
-   axonry-miner leaderboard    # champion and Pareto front
+   axonry-miner board <uid|hotkey|submission id>   # one miner in full: account, entry, its run live (time left,
+                                                   # progress, each GPU), timeline, admission, result per benchmark
    ```
    Runs may finish in any order, but results are decided strictly in priority order against the champion of
    that moment.

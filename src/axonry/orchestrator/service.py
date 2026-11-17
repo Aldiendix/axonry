@@ -756,7 +756,7 @@ class Orchestrator:
         if cmp["dominates"]:
             self.db.add_champion(season, sid, s["hotkey"], head, {"reference": ref_id, "wins": cmp["wins"]})
         self._close_pr(sid, f"axonry: submission `{sid}` -> **{decision}** ({cmp['wins']} wins, not worse on all: "
-                            f"{cmp['tie_all']}). Details: `axonry-miner show {sid}`.",
+                            f"{cmp['tie_all']}). Details: `axonry-miner board {sid}`.",
                        (rec.get("pr") or {}).get("locked_commit") if cmp["dominates"] else None)
         self._publish_season(season)
         if cmp["dominates"]:
@@ -954,12 +954,13 @@ class Orchestrator:
                 if s["pr_number"] and s["status"] not in ("PUBLISHED", "REJECTED", "FAILED", "DISQUALIFIED")]
 
     def janitor(self, every=3600, keep_snapshots=8):
-        """Hourly: staging uploads of finished submissions (their edit is published; nothing in the private bucket
-        outlives its purpose) and old state snapshots."""
+        """Hourly: what finished submissions leave behind - their staging upload and local work directory (task bundle
+        with the run's keys, agent log, build; all that matters is published) - and old state snapshots."""
         if self.d.clock() - self.db.get("janitor_at", 0) < every:
             return
         for s in self.db.subs(status=("PUBLISHED", "REJECTED", "FAILED")):
             self.d.private.delete_prefix(layout.staging_prefix(s["sid"]))
+            shutil.rmtree(Path(self.d.work_dir) / s["sid"], ignore_errors=True)
         snaps = sorted(k for k, _ in self.d.private.list(layout.STATE_PREFIX))
         for k in snaps[:-keep_snapshots]:
             self.d.private.delete_prefix(k)

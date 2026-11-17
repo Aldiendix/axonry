@@ -1,12 +1,16 @@
 """axonry-miner board: the subnet at a glance, from public data only (status.json, matches.json).
 
   1. Champion and queue   the champion (a season may open with an initial champion held by uid 0), then every
-                          submission in the queue, in priority order
+                          submission in the queue, in priority order; a run shows its time left, GPU use and the
+                          agent's progress line
   2. Not in queue         submissions waiting (no PR yet, fee not covered, ...) or stopped before a run (and why),
                           PRs that carry no submission (and why), and registered miners with a funded account but no
                           commitment
   3. Recent matches       the last N decisions; per benchmark "score[not-worse at, win at]" against the champion
                           of that moment (green: win, red: worse, plain: not worse)
+
+axonry-miner board MINER (a uid, hotkey, coldkey or submission id): that miner in full - account, entry, its run live
+(time left, progress, each GPU), timeline, admission and the result per benchmark.
 
 One registration, one entry: a hotkey's first commitment is its submission for good. A uid is shown while the
 hotkey is registered. Being deregistered after committing does not stop a submission; it only means no weight: a
@@ -111,9 +115,15 @@ def board(status: dict, matches: dict | None, n=20, color=None) -> str:
                      "no champion yet: weight burned (uid 0)"])
     queue = sorted(status.get("running", []) + status.get("evaluating", []) + status.get("queue", [])
                    + status.get("review", []), key=lambda x: tuple(x.get("priority") or (1 << 62, 0)))
+    now = status.get("updated_at") or time.time()
     for i, x in enumerate(queue, 1):
         label, col = STAGE.get(x["status"], (x["status"].lower(), ""))
-        detail = {"RUNNING": f"agent at work until {_ts(x.get('deadline'))} UTC",
+        run = (miners.get(x["hotkey"]) or {}).get("run") or {}
+        gpus = run.get("gpus") or []
+        live = " · ".join(t for t in (f"{_left(x.get('deadline'), now)} left",
+                                      f"GPU {sum(g['util_pct'] for g in gpus) // len(gpus)}%" if gpus else None,
+                                      clean(run.get("note"))) if t)
+        detail = {"RUNNING": clean(live, 70),
                   "QUEUED": f"position {x.get('position', '-')}: waiting for a machine",
                   "REVIEW": "waiting for the reviewer", "COLLECTING": "run over: edit upload and admission",
                   "ADMITTED": "benchmarks on the evaluation machine",
@@ -140,8 +150,7 @@ def board(status: dict, matches: dict | None, n=20, color=None) -> str:
         if m["hotkey"] not in seen | active and bal > 0:
             rows.append([str(m["uid"]), hot(m["hotkey"]), st("-", DIM), st("-", DIM), st("not committed", DIM),
                          f"account: {bal:.2f} USD available"])
-    out.append(table("2. Not in queue (full reason: axonry-miner show SID)", ["UID", "HOTKEY", "SID", "PR", "STATUS",
-                                                                           "DETAIL"], rows, st, right=(0,)))
+    out.append(table("2. Not in queue", ["UID", "HOTKEY", "SID", "PR", "STATUS", "DETAIL"], rows, st, right=(0,)))
 
     # 3. recent matches
     decided = sorted((r for r in (matches or {}).get("rows", []) if r.get("scores")),
@@ -162,7 +171,7 @@ def board(status: dict, matches: dict | None, n=20, color=None) -> str:
     out.append(table(f"3. Recent matches (last {n}): score[not-worse at, win at] vs the champion of the moment",
                      heads, rows, st, right=(1,)))
     out.append(st(f"status {_ts(status.get('updated_at'))} UTC · season {status.get('season', '-')} · a uid is shown "
-                  "while the hotkey is registered", DIM))
+                  "while the hotkey is registered · one miner in full: axonry-miner board <uid|hotkey|sid>", DIM))
     return "\n".join(out)
 
 
@@ -170,13 +179,157 @@ def _ts(t):
     return time.strftime("%m-%d %H:%M", time.gmtime(t)) if t else "-"
 
 
-def cmd_board(reader, n=20, color=None, watch=0):
-    """watch: redraw every that many seconds (the subnet publishes its status about once a minute)."""
+def _left(deadline, now):
+    m = max(int((deadline or now) - now), 0) // 60
+    return f"{m // 60} h {m % 60:02d} min"
+
+
+# ---- one miner in full ------------------------------------------------------------------------------------------
+SID = re.compile(r"^\d{10}-\d{4}$")
+
+
+def find(status, matches, key):
+    """-> (miner row or None, sid or None, coldkey or None) for a uid, hotkey (or its first 6+ characters), coldkey or
+    submission id."""
+    miners = status.get("miners", [])
+    rows = (matches or {}).get("rows", [])
+    if SID.match(key):
+        hk = next((r["hotkey"] for r in rows if r["sid"] == key), None)
+        m = next((m for m in miners if hk and m["hotkey"] == hk), None)
+        return m, key, m and m["coldkey"]
+    if key.isdigit():
+        m = next((m for m in miners if m["uid"] == int(key)), None)
+        return m, m and m.get("entry"), m and m["coldkey"]
+    if len(key) >= 6:
+        m = next((m for m in miners if m["hotkey"].startswith(key)), None)
+        if m:
+            return m, m.get("entry"), m["coldkey"]
+        r = next((r for r in rows if (r["hotkey"] or "").startswith(key)), None)
+        if r:
+            return None, r["sid"], None
+        if any(m["coldkey"] == key for m in miners) or key in status.get("accounts", {}):
+            return None, None, key
+    return None, None, None
+
+
+def detail(reader, status, matches, key, color=None) -> str:
+    st = Style(sys.stdout.isatty() and not os.environ.get("NO_COLOR") if color is None else color)
+    m, sid, coldkey = find(status, matches, key)
+    if not (m or sid or coldkey):
+        return f"no miner, coldkey or submission matches {key!r}"
+    now = status.get("updated_at") or time.time()
+    out = []
+
+    def head(text):
+        out.append("\n" + st(text, BOLD))
+
+    def kv(k, v):
+        out.append(f"  {k:<11} {v}")
+
+    head("MINER")
+    if m:
+        kv("uid", str(m["uid"]))
+        kv("hotkey", m["hotkey"])
+    kv("coldkey", coldkey or "-")
+    others = [x for x in status.get("miners", []) if coldkey and x["coldkey"] == coldkey and x is not m]
+    if others:
+        kv("hotkeys" if not (m or sid) else "also", ", ".join(
+            f"uid {x['uid']} " + (x.get("entry") or "no entry") for x in others))
+    a = status.get("accounts", {}).get(coldkey) if coldkey else None
+    head("ACCOUNT (USD)")
+    if a:
+        kv("available", st(f"{a['available_usd']:.2f}", BOLD) + f"   deposited {a['deposited_usd']:.2f} · charged "
+           f"{a['charged_usd']:.2f} · held for runs {a['held_usd']:.2f}")
+        for asset, v in sorted((a.get("pending_rao") or {}).items()):
+            kv("pending", f"{v / 1e9:.6f} {asset} (not priced yet)")
+    else:
+        kv("", st("no deposits seen yet", DIM))
+    if not sid:
+        if m:
+            head("ENTRY")
+            kv("", st("none: this hotkey has not committed", DIM))
+        return "\n".join(out).lstrip("\n")
+    sub = reader.get(layout.submission(sid, "submission.json")) or {}
+    status_ = sub.get("status") or next((r["status"] for r in (matches or {}).get("rows", []) if r["sid"] == sid), "?")
+    head(f"ENTRY {sid}")
+    kv("status", st(f"{status_} {sub.get('reason_code') or ''}".strip(), BOLD))
+    if sub.get("reason"):
+        kv("reason", clean(sub["reason"], 300))
+    pr = sub.get("pr") or {}
+    facts = [f"PR #{pr['number']} {clean(pr.get('title'), 50)}" if pr.get("number") else None,
+             f"commit {pr['locked_commit'][:12]}" if pr.get("locked_commit") else None,
+             f"base {sub['base']}" if sub.get("base") else None, f"parent {sub['parent']}" if sub.get("parent") else None]
+    if any(facts):
+        kv("pr", " · ".join(f for f in facts if f))
+    fee = sub.get("fee") or {}
+    if fee:
+        agent = f" + agent up to {fee['max_agent_usd']} USD" if fee.get("max_agent_usd") else ""
+        kv("fee", f"{fee['gpus']} GPU x {fee['usd_per_gpu_hour']} USD/GPU-hour{agent} · held {fee['max_usd']:.2f} · "
+                  f"charged {fee.get('charged_usd', 0):.2f}")
+    run = (m or {}).get("run")
+    if run and run.get("sid") == sid:
+        head(f"RUN (live, sampled {_ts(run.get('sampled_at'))} UTC)")
+        kv("deadline", f"{_ts(run.get('deadline'))} UTC · {_left(run.get('deadline'), now)} left")
+        kv("progress", clean(run.get("note")) or st("no progress line yet", DIM))
+        for i, g in enumerate(run.get("gpus") or []):
+            u = g["util_pct"]
+            bar = st("█" * (u // 5), GREEN if u >= 50 else YELLOW) + st("░" * (20 - u // 5), DIM)
+            kv("GPU " + str(i), f"{bar} {u:>3}%   {g['mem_used_mib'] / 1024:5.1f} / {g['mem_total_mib'] / 1024:.1f} GiB")
+    tl = sub.get("timeline") or {}
+    events = sorted((v, k) for k, v in tl.items() if v and (k != "deadline" or "agent_end" not in tl))
+    if events:
+        head("TIMELINE (UTC)")
+        for t, k in events:
+            kv(_ts(t), k.replace("_", " "))
+    adm = reader.get(layout.submission(sid, "admission.json"))
+    if adm:
+        head("ADMISSION " + (st("passed", GREEN) if adm["passed"] else st("rejected", RED)))
+        for v in adm.get("violations") or []:
+            kv("-", clean(v, 200))
+    score = reader.get(layout.submission(sid, "score.json"))
+    if score:
+        bs = score["benchmarks"]
+        if score["decision"] == "INITIAL_CHAMPION":
+            head("RESULT the season's initial champion (it plays no match)")
+            rows = [[k.split("@")[0], f"{b['acc']:.2f}"] for k, b in bs.items()]
+            out.append(table("", ["BENCHMARK", "ACC"], rows, st, right=(1,)).split("\n", 1)[1].rstrip())
+        else:
+            ref = next(iter(bs.values()))["vs_champion"]["ref"]
+            won = score["decision"] == "NEW_CHAMPION"
+            head(f"RESULT {st(score['decision'], GREEN if won else '')} vs {ref}: {score['wins']} wins "
+                 f"(needs {score['judge']['n_win']}), not worse on all: {'yes' if score['tie_all'] else 'no'}")
+            rows = []
+            for k, b in bs.items():
+                c = b["vs_champion"]
+                rows.append([k.split("@")[0], f"{b['acc']:.2f}", f"{c['ref_acc']:.2f}", f"{c['d']:+.2f}", f"{c['se']:.2f}",
+                             f"{c['tie_at']:.2f}", f"{c['win_at']:.2f}",
+                             st("win", GREEN) if c["win"] else (st("not worse", "") if c["tie_ok"] else st("worse", RED))])
+            out.append(table("", ["BENCHMARK", "ACC", "CHAMPION", "D", "SE", "NOT-WORSE AT", "WIN AT", "VERDICT"], rows,
+                             st, right=(1, 2, 3, 4, 5, 6)).split("\n", 1)[1].rstrip())
+    ruling = reader.get(layout.submission(sid, "ruling.json"))
+    if ruling:
+        head(st("DISQUALIFIED by the owner", RED))
+        kv("", clean(ruling["reason"], 300))
+    if sub.get("agent_log") == "published" or adm or score:
+        head("FILES")
+        kv("public", f"{reader.base or '<public>'}/{layout.submission(sid, '')}"
+               + ("  (agent/: the agent's full log)" if sub.get("agent_log") == "published" else ""))
+    return "\n".join(out).lstrip("\n")
+
+
+def cmd_board(reader, n=20, color=None, watch=0, miner=None):
+    """watch: redraw every that many seconds (the subnet publishes its status about once a minute); miner: one miner
+    in full instead of the overview."""
     while True:
         status = reader.get(layout.STATUS)
         season = status and (status.get("season") or reader.current_season())
-        text = board(status, reader.get(layout.season_file(season, "matches.json")) if season else None, n, color) \
-            if status else "no status published yet"
+        matches = reader.get(layout.season_file(season, "matches.json")) if season else None
+        if not status:
+            text = "no status published yet"
+        elif miner:
+            text = detail(reader, status, matches, miner, color)
+        else:
+            text = board(status, matches, n, color)
         print(("\033[H\033[2J" if watch else "") + text, flush=True)
         if not watch:
             return
