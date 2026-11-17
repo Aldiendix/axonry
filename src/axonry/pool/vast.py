@@ -156,6 +156,9 @@ class Fleet:
             if row["state"] == "booting":
                 inst = self.api.show(row["provider_id"]) or {}
                 port = ((inst.get("ports") or {}).get("22/tcp") or [{}])[0].get("HostPort")
+                msg = (inst.get("status_msg") or "").strip()
+                if inst.get("actual_status") != "running" and msg.startswith("Error"):   # e.g. its GPUs unusable
+                    raise SetupFailed(f"vast.ai could not start the container: {msg[:300]}")
                 if inst.get("actual_status") != "running" or not port:
                     return "booting"
                 m = self._reachable(purpose, [(inst["public_ipaddr"].strip(), int(port)),

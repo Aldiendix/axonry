@@ -100,6 +100,14 @@ def test_a_machine_that_fails_setup_is_destroyed_and_never_rented_again(tmp_path
     assert f.advance("s1") == "failed" and api.destroyed == ["i1", "i2"]
 
 
+def test_a_machine_whose_container_cannot_start_is_dropped_at_once(tmp_path):
+    f, api, _ = fleet(tmp_path, [1000.0])
+    f.rent("s1", "RTX 4090", 8)
+    assert f.advance("s1") == "booting"               # still loading
+    api.status["i1"] = {"actual_status": "created", "status_msg": "Error response from daemon: failed to inject CDI devices"}
+    assert f.advance("s1") == "failed" and api.destroyed == ["i1"]
+
+
 def test_a_host_whose_direct_port_is_unreachable_is_used_through_the_vast_relay(tmp_path):
     clock = [1000.0]
     f, api, remote = fleet(tmp_path, clock)
