@@ -5,7 +5,7 @@ its own netuid or signing key disagree with them. Unset values mean "not launche
 
 NETWORKS = {
     "finney": {"netuid": 99, "owner": "5Gc37JvSDmMt9MdfALfVkDWwAaGtygc2Vs4dJvbcc3h9QPGf",
-               "public_url": "https://pub-fd4122083a524b7facecf9cdf01ba887.r2.dev"},
+               "public_url": "https://storage.axonry.ai"},
     "test": {"netuid": None, "owner": None, "public_url": None},
 }
 
