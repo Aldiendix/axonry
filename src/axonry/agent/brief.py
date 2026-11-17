@@ -103,7 +103,9 @@ the parent unchanged, improves nothing.
 3. `REPORT.md`: what failure you targeted, how the spec was derived, controls, what did not work.
 
 ## Progress
-Keep `PROGRESS.md` in your workspace up to date (every ~30 min): what is done, what is next. When a turn ends
+Keep `PROGRESS.md` in your workspace up to date (every ~30 min): what is done, what is next. Its first line is
+your status, shown publicly while you run: one plain sentence of at most 20 words (e.g. "Screening layer 12-16
+directions on gsm8k; best so far +2.1"). When a turn ends
 before the deadline you will be asked to continue from it.
 """
 

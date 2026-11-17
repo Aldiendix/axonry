@@ -8,6 +8,7 @@ evaluation jobs) belongs to root, the agent logs in as the unprivileged user `ag
 import hashlib
 import io
 import json
+import re
 import shlex
 import subprocess
 import tarfile
@@ -105,6 +106,19 @@ def ssh(m: Machine, key, command: str, timeout=900, attempts=3, binary=False):
     if r.returncode != 0:
         raise MachineError(f"{m.name}: `{command[:120]}` failed: {r.stderr.decode(errors='replace').strip()[-500:]}")
     return r.stdout if binary else r.stdout.decode(errors="replace")   # logs may hold torn multibyte characters
+
+
+def sample(m: Machine, key) -> dict:
+    """A run's machine at a glance (public status): each GPU's use, and the agent's one-line status (the first line of
+    its PROGRESS.md, at most 20 words; None before it writes one)."""
+    out = ssh(m, key, "nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits;"
+              " echo ---; head -c 2000 /workspace/work/PROGRESS.md 2>/dev/null || true", timeout=60, attempts=1)
+    gpus_out, _, progress = out.partition("---\n")
+    gpus = [dict(zip(("util_pct", "mem_used_mib", "mem_total_mib"), map(int, line.split(","))))
+            for line in gpus_out.splitlines() if line.strip()]
+    line = next((x for x in progress.splitlines() if x.strip()), "")
+    line = re.sub(r"^(status:)\s*", "", line.strip().lstrip("#*->` ").strip(), flags=re.I)
+    return {"gpus": gpus, "note": " ".join(line.split()[:20])[:200] or None}
 
 
 def scp(m: Machine, key, srcs, dst: str, timeout=1800, attempts=3):

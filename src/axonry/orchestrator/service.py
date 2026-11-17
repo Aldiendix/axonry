@@ -52,6 +52,7 @@ from ..publish import publisher, redact
 from .db import DB
 
 log = logging.getLogger("axonry")
+LIVE_EVERY = 300     # seconds between samples of a running machine (status.json, miners[].run)
 
 def without_secrets(task: dict) -> dict:
     """The task as kept at rest (DB and its snapshots): the sandbox key and the R2 credentials are only ever in the
@@ -452,6 +453,8 @@ class Orchestrator:
                 if self.now() < task["run"]["deadline"]:
                     continue
                 outcome = "finished"
+            if outcome == "running" and self.now() - st.get("live", {}).get("at", 0) >= LIVE_EVERY:
+                st["live"] = self._sample(sid)
             self.db.save_run(sid, sup_state=st)
             if outcome == "running":
                 continue
@@ -869,7 +872,8 @@ class Orchestrator:
     def publish_status(self, every=60):
         """status.json: everything in priority order - the review queue (reviewers take it top-down), the run queue,
         runs in progress and evaluations; submissions waiting (and why) and those stopped before a run; PRs that carry
-        no submission (and why); every account (deposits, charges, balance per asset)."""
+        no submission (and why); every account (deposits, charges, balance per asset); every registered miner with its
+        balance and its run in progress (the frontend's miner view)."""
         if self.d.clock() - self.db.get("status_at", 0) < every:
             return
         def row(s):
@@ -887,10 +891,11 @@ class Orchestrator:
             running.append({**row(s), "deadline": (run.get("task") or {}).get("run", {}).get("deadline")})
         rules = registry.rules_at(self.d.chain.finalized_head(), self.d.registry_root)
         champ = self.db.champion(rules.season)
+        accounts = self.db.accounts()
         doc = {"schema": publisher.SCHEMAS["status"], "updated_at": self.now(), "season": rules.season,
                "repo": getattr(self.d.github, "repo", None),
                "champion": self._champion_row(champ),
-               "miners": self._miners(rules["netuid"]),
+               "miners": self._miners(rules["netuid"], accounts),
                "review": [row(s) for s in by_prio if s["status"] == "REVIEW"],
                "queue": [{**row(s), "position": i + 1}
                          for i, s in enumerate(x for x in by_prio if x["status"] == "QUEUED")],
@@ -900,7 +905,7 @@ class Orchestrator:
                "evaluating": [row(s) for s in by_prio if s["status"] in ("COLLECTING", "ADMITTED", "SCORED")],
                "prs": sorted(self.db.get("prs", {}).values(), key=lambda w: w["pr"]),
                "contents": self._contents(),
-               "accounts": self.db.accounts()}
+               "accounts": accounts}
         self.d.public.put(layout.STATUS, pretty(doc))
         self.db.set("status_at", self.d.clock())
 
@@ -912,14 +917,34 @@ class Orchestrator:
         return {"sid": champ["sid"], "hotkey": champ["hotkey"], "pr": pr.get("number"),
                 "title": pr.get("title") or rec.get("about"), "initial": rec.get("initial")}
 
-    def _miners(self, netuid):
-        """Who is registered right now: [{uid, hotkey, coldkey}] (owners cached; a hotkey's owner does not change)."""
+    def _sample(self, sid) -> dict:
+        """The run's machine now: GPU use and the agent's one-line status (secrets of the run removed)."""
+        try:
+            live = self.d.fleet.sample(sid)
+            if live["note"]:
+                live["note"] = redact.redact(live["note"], redact.secrets_in_bundle(self._bundle_path(sid)))
+        except Exception as e:   # the run goes on; the status shows the last sample's age
+            log.warning("sample %s: %s", sid, str(e).splitlines()[0][:200])
+            live = {}
+        return {**live, "at": self.now()}
+
+    def _miners(self, netuid, accounts):
+        """Who is registered right now, with what a miner's page shows: [{uid, hotkey, coldkey, account (its coldkey's
+        balance), run (its run in progress: deadline, the agent's one-line status, each GPU's use, sampled_at; None
+        when it has none)}] (owners cached; a hotkey's owner does not change)."""
         owners = self.__dict__.setdefault("_owners", {})
+        runs = {}
+        for s in self.db.subs(status=("RUNNING",)):
+            r = self.db.run(s["sid"]) or {}
+            live = (r.get("sup_state") or {}).get("live") or {}
+            runs[s["hotkey"]] = {"sid": s["sid"], "deadline": (r.get("task") or {}).get("run", {}).get("deadline"),
+                                 "note": live.get("note"), "gpus": live.get("gpus"), "sampled_at": live.get("at")}
         out = []
         for uid, hk in sorted(self.d.chain.uid_hotkeys(netuid).items()):
             if hk not in owners:
                 owners[hk] = self.d.chain.owner_of(hk, None)
-            out.append({"uid": uid, "hotkey": hk, "coldkey": owners[hk]})
+            out.append({"uid": uid, "hotkey": hk, "coldkey": owners[hk], "account": accounts.get(owners[hk]),
+                        "run": runs.get(hk)})
         return out
 
     def _contents(self):

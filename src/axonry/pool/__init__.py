@@ -1,6 +1,6 @@
 """All GPU machines: the hosts we own first (pool/owned.py), then machines rented on vast.ai (pool/vast.py) when that is
 enabled. One table holds both; each row is driven by the pool it came from."""
-from .machine import MachineError
+from .machine import MachineError, sample
 from .owned import OWNED
 
 
@@ -42,6 +42,10 @@ class Machines:
 
     def hand_over(self, purpose, public_key: str, deadline: int):
         return self._of(self.get(purpose)).hand_over(purpose, public_key, deadline)
+
+    def sample(self, purpose) -> dict:
+        row = self.get(purpose)
+        return sample(self.machine(row), self.key)
 
     def probe(self, purpose) -> dict:
         return self._of(self.get(purpose)).probe(purpose)

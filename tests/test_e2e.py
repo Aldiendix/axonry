@@ -188,6 +188,10 @@ class FakeFleet:
     def vanished(self, purpose):
         return purpose in self.lost
 
+    def sample(self, purpose):
+        return {"gpus": [{"util_pct": 97, "mem_used_mib": 20000, "mem_total_mib": 24564}] * 4,
+                "note": "Screening directions on 203.0.113.7; best so far +2.1"}
+
 
 class FakeRunner:
     name = "fake"
@@ -457,6 +461,12 @@ def test_accounts_and_fees(tmp_path):
     orch.supervise()
     assert orch.db.charged(sid) == {1: HOUR, 2: HOUR}                               # each full hour
     assert orch.db.accounts()[ck]["held_usd"] == RUN_USD - 2 * HOUR / pricing.MUSD
+    orch.db.set("status_at", 0)
+    orch.publish_status()                               # a miner's view: its balance and its run, together
+    m = next(x for x in json.loads(pub.get(layout.STATUS))["miners"] if x["hotkey"] == HOTKEYS["A"])
+    assert m["account"]["held_usd"] == RUN_USD - 2 * HOUR / pricing.MUSD and m["run"]["sid"] == sid
+    assert m["run"]["note"] == "Screening directions on [redacted]; best so far +2.1"   # the run's secrets removed
+    assert [g["util_pct"] for g in m["run"]["gpus"]] == [97] * 4 and m["run"]["sampled_at"] == clock.t
     for _ in range(2):                                  # idle with a complete upload: two continues, then done
         clock.t += 300
         orch.supervise()
@@ -472,6 +482,7 @@ def test_accounts_and_fees(tmp_path):
     orch.db.set("status_at", 0)
     orch.publish_status()
     assert json.loads(pub.get(layout.STATUS))["accounts"][ck]["charged_usd"] == used / 1e6
+    assert next(x for x in json.loads(pub.get(layout.STATUS))["miners"] if x["hotkey"] == HOTKEYS["A"])["run"] is None
 
 
 def test_one_registration_one_entry(tmp_path):
