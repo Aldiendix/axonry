@@ -5,11 +5,6 @@
 </p>
 
 <p align="center">
-  <img alt="Bittensor subnet 99" src="https://img.shields.io/badge/bittensor-subnet%2099-1f2937?style=flat-square">
-  <img alt="Python 3.12" src="https://img.shields.io/badge/python-3.12-1f2937?style=flat-square">
-</p>
-
-<p align="center">
   <a href="https://axonry.ai"><strong>axonry.ai</strong></a>
   &nbsp;&middot;&nbsp;
   <a href="https://github.com/AxOrganization/WeightSpaceProgramming">Competition repository</a>
