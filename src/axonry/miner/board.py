@@ -30,7 +30,8 @@ _CTRL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 _ANSI = re.compile(r"\033\[[0-9;]*m|\033\]8;;[^\033]*\033\\")
 
 STAGE = {   # status -> (label, colour)
-    "REVIEW": ("in review", YELLOW), "QUEUED": ("queued", CYAN), "RUNNING": ("running", MAGENTA),
+    "REVIEW": ("in review", YELLOW), "QUEUED": ("queued", CYAN), "STARTING": ("starting", CYAN),
+    "RUNNING": ("running", MAGENTA),
     "COLLECTING": ("collecting", MAGENTA), "ADMITTED": ("evaluating", MAGENTA),
     "SCORED": ("scored", MAGENTA)}
 WHY = {     # reason code -> short label
@@ -125,6 +126,7 @@ def board(status: dict, matches: dict | None, n=20, color=None) -> str:
                                       clean(run.get("note"))) if t)
         detail = {"RUNNING": clean(live, 70),
                   "QUEUED": f"position {x.get('position', '-')}: waiting for a machine",
+                  "STARTING": "its machine is being set up",
                   "REVIEW": "waiting for the reviewer", "COLLECTING": "run over: edit upload and admission",
                   "ADMITTED": "benchmarks on the evaluation machine",
                   "SCORED": "decided once every earlier submission is"}.get(x["status"], "")
@@ -250,6 +252,10 @@ def detail(reader, status, matches, key, color=None) -> str:
             kv("", st("none: this hotkey has not committed", DIM))
         return "\n".join(out).lstrip("\n")
     sub = reader.get(layout.submission(sid, "submission.json")) or {}
+    live = next((r for k in ("review", "queue", "running", "evaluating", "waiting") for r in status.get(k, [])
+                 if r["sid"] == sid), None)
+    if live and not sub.get("status"):          # an entry still in progress: its live row
+        sub = {**sub, "status": live["status"], "reason_code": live.get("reason_code"), "reason": live.get("reason")}
     status_ = sub.get("status") or next((r["status"] for r in (matches or {}).get("rows", []) if r["sid"] == sid), "?")
     head(f"ENTRY {sid}")
     kv("status", st(f"{status_} {sub.get('reason_code') or ''}".strip(), BOLD))

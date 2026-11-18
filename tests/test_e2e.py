@@ -1029,3 +1029,17 @@ def test_a_pr_opened_before_its_commitment_carries_nothing(tmp_path):
     open_season(orch, 101)
     (s,) = orch.db.subs()
     assert s["reason_code"] == "NO_PR" and "opened before" in orch.db.get("prs")["1"]["reason"]
+
+
+def test_an_entry_shows_starting_while_its_machine_sets_up(tmp_path):
+    orch, chain, clock, pub = make(tmp_path)
+    orch.bootstrap()
+    pay(orch, chain, "A", 101, 2)
+    chain.head = 101
+    open_season(orch, 101)
+    orch.d.fleet.rent((s := orch.db.subs()[0])["sid"], "RTX 4090", 4)
+    orch.d.fleet.db.set_machine(s["sid"], state="booting")
+    orch.db.update(s["sid"], "QUEUED", reason="machine setup failed")       # left by a machine given up before
+    orch.publish_status(every=0)
+    (row,) = json.loads(pub.get(layout.STATUS))["queue"]
+    assert (row["status"], row["reason"]) == ("STARTING", None)

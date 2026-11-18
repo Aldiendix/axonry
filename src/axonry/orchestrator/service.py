@@ -886,9 +886,11 @@ class Orchestrator:
             return
         def row(s):
             pr = s["record"].get("pr") or {}
+            starting = s["status"] == "QUEUED" and self.d.fleet.get(s["sid"]) is not None   # its machine sets up
             return {"sid": s["sid"], "hotkey": s["hotkey"], "pr": s["pr_number"],
                     "title": pr.get("title") or s["record"].get("about"),
-                    "status": s["status"], "reason_code": s["reason_code"], "reason": s["reason"],
+                    "status": "STARTING" if starting else s["status"],
+                    "reason_code": None if starting else s["reason_code"], "reason": None if starting else s["reason"],
                     "commit": s["locked_commit"] or s["head_sha"], "content_digest": s["content_digest"],
                     "directory": pr.get("directory"),
                     "priority": [s["prio_block"], s["prio_index"]]}

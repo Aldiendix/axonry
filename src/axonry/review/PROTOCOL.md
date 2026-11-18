@@ -67,8 +67,9 @@ From the lock on, pushes to the PR never affect the entry.
 
 ## 4. Runs and decisions (orchestrator)
 
-- `QUEUED` submissions get a GPU machine each in priority order (up to the concurrency limit) and start when it is
-  ready; several run at once and may finish in any order.
+- `QUEUED` submissions get a GPU machine each in priority order (up to the concurrency limit); while it is set up
+  status.json shows `STARTING`, and the run starts (`RUNNING`) when it is ready; several run at once and may finish
+  in any order.
 - A finished entry (rejected, failed or decided) gets its result as a comment on its PR, which is then closed.
 - A run is charged for its GPUs by the hour (one hour's price at each full hour from its start, and at its end -
   the deadline, or the agent's `axonry-done` - the time actually used) and, at its end, for its agent's model use
