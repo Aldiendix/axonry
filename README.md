@@ -43,7 +43,16 @@ its weight to the best model. The champion, the queue, every run and every resul
    paired with the current champion on the same questions and seeds.
 6. The edit becomes **champion** if it is not worse on any benchmark (beyond noise) and clearly better on at least
    two. Until there is a champion, the base model is the reference and the weight is burned (uid 0). The champion
-   receives all of the subnet's weight. Every edit, score and agent log is public.
+   receives the subnet's weight (`weights.json` shows any share the owner burns). Every edit, score and agent log is
+   public.
+
+**Not worse, clearly better.** On each benchmark, `d` is the edit's mean gain over the reference on the same items and
+`se` its paired standard error, both in percentage points. Not worse: `d >= -max(2*se, eps_tie)`; clearly better:
+`d - 2*se >= delta_win` (the factor 2, `eps_tie`, `delta_win` and the number of wins needed are in the rules). Every
+match publishes its `d`, `se` and both thresholds in its `score.json`. To gauge the noise before a run, use the
+reference's public per-question results (`k` samples per item): a re-evaluation of the same model differs by about
+`100 * sqrt(2 * sum(s_i^2) / k) / n`, with `s_i^2` the variance of item `i`'s samples and `n` the items; a match's
+`se` is usually somewhat larger.
 
 Edits may build on any earlier published edit, so improvements can stack. The competition runs on one base model at
 a time: when the rules move to a new base model, it starts its own line of champions (the earlier lines stay
