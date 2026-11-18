@@ -827,9 +827,11 @@ class Orchestrator:
         publisher.publish_index(self.d.public, rules, self.d.registry_root)
 
     def bootstrap(self):
-        """Publish definitions and the index of the rules in force, and a first weights.json (uid0 = burn) if none
-        exists yet."""
+        """Publish definitions, every base model's line, the index of the rules in force, and a first weights.json
+        (uid0 = burn) if none exists yet."""
         publisher.publish_registry(self.d.public, self.d.registry_root)
+        for base in sorted({r["base"] for r in registry.all_rules(self.d.registry_root)}):
+            self._publish_line(base)
         if self.d.public.get(layout.WEIGHTS) is None:
             self.publish_weights()
         elif rules := self._in_force(self.d.chain.finalized_head()):     # the rules in force, as now in the registry

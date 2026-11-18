@@ -29,40 +29,13 @@ CREATE TABLE IF NOT EXISTS champions (base TEXT, seq INTEGER, sid TEXT, hotkey T
   evidence TEXT, PRIMARY KEY (base, seq));
 """
 
-# One-time move from season-labelled state (2026-11-18): the only season, s1, was the line of this base, and its rules
-# lost the season field (new sha). Remove once no state of that time exists.
-_SEASONS = {"s1": "qwen35-0.8b-think"}
-_RULES = {"9236661f70663b6e1904d19ca1e61212fc4d468452d6fb34685a8962de014771":
-          "718c76f03cfcb278b0a52ba3971f8d5bb567bc04056c071785390cf008fc0ee9"}
-
-
 class DB:
     def __init__(self, path):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.c = sqlite3.connect(str(path), isolation_level=None, timeout=60)
         self.c.row_factory = sqlite3.Row
         self.c.execute("PRAGMA journal_mode=WAL")      # main loop and eval worker are separate processes
-        self._from_seasons()
         self.c.executescript(SCHEMA)
-
-    def _from_seasons(self):
-        old = lambda: "season" in {r["name"] for r in self.c.execute("PRAGMA table_info(submissions)")}  # noqa: E731
-        if not old():
-            return
-        self.c.execute("BEGIN IMMEDIATE")      # main and eval open the DB at once: one moves it, the other sees it moved
-        if not old():
-            self.c.execute("COMMIT")
-            return
-        for table in ("submissions", "champions"):
-            self.c.execute(f"ALTER TABLE {table} RENAME COLUMN season TO base")
-            for old, base in _SEASONS.items():
-                self.c.execute(f"UPDATE {table} SET base=? WHERE base=?", (base, old))
-        for r in self.c.execute("SELECT sid, record FROM submissions").fetchall():
-            rec = json.loads(r["record"])
-            rec.pop("season", None)
-            rec["rules_sha256"] = _RULES.get(rec.get("rules_sha256"), rec.get("rules_sha256"))
-            self.c.execute("UPDATE submissions SET record=? WHERE sid=?", (json.dumps(rec), r["sid"]))
-        self.c.execute("COMMIT")
 
     def snapshot(self) -> bytes:
         """A consistent copy of the whole database (the WAL included), taken while it is in use."""

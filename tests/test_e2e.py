@@ -1032,3 +1032,10 @@ def test_changing_the_burned_share_reissues_the_weights(tmp_path):
     orch.refresh_weights()
     w = json.loads(pub.get(layout.WEIGHTS))
     assert w["sequence"] == seq + 1 and w["burn"] == 0.25
+
+
+def test_the_line_is_published_from_the_start(tmp_path):
+    orch, chain, clock, pub = make(tmp_path)
+    orch.bootstrap()
+    line = json.loads(pub.get(layout.line(RULES["base"])))
+    assert line["champion"] is None and line["entries"] == [] and line["history"] == []

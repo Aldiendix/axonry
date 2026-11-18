@@ -196,31 +196,6 @@ def test_a_champion_after_a_disqualified_one_gets_the_next_number(tmp_path):
     db.add_champion(base, "0000000002-0001", "hk2", 2, {})          # used to collide with the disqualified one
     assert [c["seq"] for c in db.champions(base)] == [1, 2] and db.champion(base)["sid"] == "0000000002-0001"
 
-
-def test_state_from_the_season_era_moves_to_base_lines(tmp_path):
-    """The live state of 2026-11-18 (season s1, rules before their season field went) opens as the base's line."""
-    import sqlite3
-    from axonry import registry
-    old = sqlite3.connect(tmp_path / "db.sqlite")
-    old.executescript(
-        "CREATE TABLE submissions (sid TEXT PRIMARY KEY, season TEXT, hotkey TEXT, coldkey TEXT, status TEXT NOT NULL,"
-        " reason_code TEXT, reason TEXT, content_digest TEXT, record TEXT NOT NULL, created_at REAL, updated_at REAL,"
-        " decided_at REAL, infra_retries INTEGER DEFAULT 0, pr_number INTEGER, head_sha TEXT, prio_block INTEGER,"
-        " prio_index INTEGER, locked_commit TEXT, run_cost INTEGER);"
-        "CREATE TABLE champions (season TEXT, seq INTEGER, sid TEXT, hotkey TEXT, block INTEGER, at REAL,"
-        " evidence TEXT, PRIMARY KEY (season, seq));")
-    rec = {"season": "s1", "rules_sha256": "9236661f70663b6e1904d19ca1e61212fc4d468452d6fb34685a8962de014771"}
-    old.execute("INSERT INTO submissions(sid, season, hotkey, status, record) VALUES ('0009531781-0011', 's1', 'hk',"
-                " 'RUNNING', ?)", (json.dumps(rec),))
-    old.commit()
-    old.close()
-    db = DB(tmp_path / "db.sqlite")
-    (s,) = db.subs(base="qwen35-0.8b-think")
-    assert s["record"] == {"rules_sha256": registry.latest_rules().sha256}
-    DB(tmp_path / "db.sqlite")                                             # opening again changes nothing
-    assert db.sub("0009531781-0011")["record"] == s["record"]
-
-
 def test_a_state_snapshot_holds_what_is_still_in_the_wal(tmp_path):
     db = DB(tmp_path / "s.sqlite")
     db.set("cursor", 123)                       # committed, not yet checkpointed into the main file
