@@ -66,3 +66,13 @@ def test_publish_registry(tmp_path):
     idx = json.loads(s.get(layout.INDEX))
     assert json.loads(s.get(idx["rules"])) == rules.doc          # index -> the rules version in force, no copy
     assert s.get(layout.base_def("qwen35-0.8b-think")) and s.get(layout.benchmark_def("math500", 1))
+
+
+def test_the_owner_burns_a_share_beside_the_champion_and_validators_need_no_change():
+    champ = {"sid": "s", "hotkey": "hk5", "uid": 5}
+    doc = publisher.build_weights(99, "s1", champ, 3, 100, burn=0.3)
+    assert v.check(doc, None, 99, 2) is None or "signature" in v.check(doc, None, 99, 2)
+    assert v.resolve(doc, {5: "hk5"}) == {5: 0.7, 0: 0.3}
+    assert v.resolve(doc, {5: "other"}) == {0: 1.0}                     # deregistered champion: all burned
+    assert v.resolve(publisher.build_weights(99, "s1", champ, 3, 100, burn=1.0), {5: "hk5"}) == {0: 1.0}
+    assert v.resolve(publisher.build_weights(99, "s1", champ, 3, 100), {5: "hk5"}) == {5: 1.0}

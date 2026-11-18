@@ -131,7 +131,14 @@ def deps(cfg: Config, db, rules, comp_rules, **parts):
         "work_dir": cfg.path_of("state.work_dir"),
         "max_concurrent": runner.capacity,          # runs at once: the agent accounts' room (machines: vast.max_gpus)
         "eval_gpu_name": cfg.get("machines.eval_gpu_name", "RTX 4090"), "eval_gpus": int(cfg.get("machines.eval_gpus", 8)),
-        "eval_idle_minutes": int(cfg.get("machines.eval_idle_minutes", 20)), **parts})
+        "eval_idle_minutes": int(cfg.get("machines.eval_idle_minutes", 20)), "burn": owner_burn(cfg), **parts})
+
+
+def owner_burn(cfg) -> float:
+    burn = float(cfg.get("owner.burn", 0.0))
+    if not 0 <= burn <= 1:
+        raise SystemExit(f"owner.burn must be between 0 and 1, got {burn}")
+    return burn
 
 
 def build(cfg: Config):

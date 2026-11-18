@@ -1043,3 +1043,20 @@ def test_an_entry_shows_starting_while_its_machine_sets_up(tmp_path):
     orch.publish_status(every=0)
     (row,) = json.loads(pub.get(layout.STATUS))["queue"]
     assert (row["status"], row["reason"]) == ("STARTING", None)
+
+
+def test_changing_the_burned_share_reissues_the_weights(tmp_path):
+    import time
+    orch, chain, clock, pub = make(tmp_path)
+    clock.t = int(time.time())                      # weights.json's issued_at is wall time
+    orch.d.registry_root = registry_copy(tmp_path, effective_block=100)
+    chain.head = 120
+    orch.intake()
+    orch.bootstrap()
+    seq = json.loads(pub.get(layout.WEIGHTS))["sequence"]
+    orch.refresh_weights()
+    assert json.loads(pub.get(layout.WEIGHTS))["sequence"] == seq          # nothing changed: not re-issued
+    orch.d.burn = 0.25
+    orch.refresh_weights()
+    w = json.loads(pub.get(layout.WEIGHTS))
+    assert w["sequence"] == seq + 1 and w["burn"] == 0.25

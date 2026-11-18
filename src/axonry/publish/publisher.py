@@ -85,14 +85,17 @@ def publish_season(store, season, matches: list, leaderboard: dict):
           {"schema": SCHEMAS["leaderboard"], "season": season, "updated_at": int(time.time()), **leaderboard})
 
 
-def build_weights(netuid, season, champion, sequence, block, fallback_uid=0):
-    """champion: {"sid", "hotkey", "uid"} or None (base model is champion -> everything to fallback uid0 = burn)."""
-    if champion and champion.get("uid") is not None:
-        weights = [{"uid": champion["uid"], "hotkey": champion["hotkey"], "weight": 1.0}]
+def build_weights(netuid, season, champion, sequence, block, fallback_uid=0, burn=0.0):
+    """champion: {"sid", "hotkey", "uid"} or None (base model is champion -> everything to fallback uid0 = burn).
+    burn: the owner's share of the weight burned (to uid0) even when there is a champion."""
+    if champion and champion.get("uid") is not None and burn < 1:
+        weights = [{"uid": champion["uid"], "hotkey": champion["hotkey"], "weight": round(1.0 - burn, 6)}]
+        if burn > 0:
+            weights.append({"uid": fallback_uid, "hotkey": None, "weight": round(burn, 6)})
     else:
         weights = [{"uid": fallback_uid, "hotkey": None, "weight": 1.0}]
     return {"schema": SCHEMAS["weights"], "netuid": netuid, "sequence": sequence, "season": season,
-            "issued_at": int(time.time()), "issued_block": block, "champion": champion,
+            "issued_at": int(time.time()), "issued_block": block, "champion": champion, "burn": burn,
             "weights": weights,
             "fallback": {"uid": fallback_uid, "reason": "no champion or champion hotkey not registered: uid0 (burn)"}}
 

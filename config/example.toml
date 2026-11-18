@@ -8,6 +8,7 @@ network = "finney"            # or "test" / a ws:// endpoint
 wallet = "owner"
 hotkey = "default"
 # path = "~/.bittensor/wallets"
+burn = 0.0                    # share of the weight burned (uid0) beside the champion's; validators need no change
 
 [competition]
 github_token_env = "AXONRY_GITHUB_TOKEN"     # contents:write (lock tags axonry/<sid>, champion merge), pull_requests:write

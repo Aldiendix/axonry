@@ -85,6 +85,7 @@ class Deps:
     eval_gpu_name: str = "RTX 4090"
     eval_gpus: int = 8
     eval_idle_minutes: int = 20
+    burn: float = 0.0             # the owner's share of the weight burned (uid0) beside the champion's
 
 
 class Orchestrator:
@@ -849,7 +850,7 @@ class Orchestrator:
             info = {"sid": champ["sid"], "hotkey": champ["hotkey"], "uid": uid}
         published = json.loads(self.d.public.get(layout.WEIGHTS) or "{}").get("sequence", 0)
         seq = max(self.db.get("weights_sequence", 0), published) + 1     # a restored state DB may lag behind
-        doc = publisher.build_weights(rules["netuid"], season, info, seq, head)
+        doc = publisher.build_weights(rules["netuid"], season, info, seq, head, burn=self.d.burn)
         publisher.publish_weights(self.d.public, doc, self.d.owner_keypair)
         self.db.set("weights_sequence", seq)
         publisher.publish_index(self.d.public, season, rules.sha256)
@@ -864,8 +865,8 @@ class Orchestrator:
             publisher.publish_index(self.d.public, rules.season, rules.sha256)
 
     def refresh_weights(self, max_age=86400):
-        """Re-issue weights.json when it is old, a new season is in force, or the champion's uid changed
-        (re-registration)."""
+        """Re-issue weights.json when it is old, a new season is in force, the owner's burned share changed, or the
+        champion's uid changed (re-registration)."""
         raw = self.d.public.get(layout.WEIGHTS)
         if raw is None:
             return self.publish_weights()
@@ -874,7 +875,8 @@ class Orchestrator:
         moved = bool(champ) and self.d.chain.uid_of(champ["hotkey"], cur["netuid"]) != champ.get("uid")
         rules = self._in_force(self.d.chain.finalized_head())
         new_season = rules is not None and rules.season != cur.get("season")
-        if moved or new_season or self.d.clock() - cur.get("issued_at", 0) > max_age:
+        burn = cur.get("burn", 0.0) != self.d.burn             # the owner changed the burned share
+        if moved or new_season or burn or self.d.clock() - cur.get("issued_at", 0) > max_age:
             self.publish_weights()
 
     def publish_status(self, every=60):
