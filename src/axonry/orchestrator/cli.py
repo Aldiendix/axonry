@@ -131,7 +131,8 @@ def deps(cfg: Config, db, rules, comp_rules, **parts):
         "work_dir": cfg.path_of("state.work_dir"),
         "max_concurrent": runner.capacity,          # runs at once: the agent accounts' room (machines: vast.max_gpus)
         "eval_gpu_name": cfg.get("machines.eval_gpu_name", "RTX 4090"), "eval_gpus": int(cfg.get("machines.eval_gpus", 8)),
-        "eval_idle_minutes": int(cfg.get("machines.eval_idle_minutes", 20)), "burn": owner_burn(cfg), **parts})
+        "eval_idle_minutes": int(cfg.get("machines.eval_idle_minutes", 20)), "burn": owner_burn(cfg),
+        "eval_image": cfg.get("machines.image"), **parts})
 
 
 def owner_burn(cfg) -> float:

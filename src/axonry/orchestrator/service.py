@@ -86,6 +86,7 @@ class Deps:
     eval_gpus: int = 8
     eval_idle_minutes: int = 20
     burn: float = 0.0             # the owner's share of the weight burned (uid0) beside the champion's
+    eval_image: str | None = None # the pinned container image results are generated in (recorded with each score)
 
 
 class Orchestrator:
@@ -656,7 +657,7 @@ class Orchestrator:
                     return                             # one model per call: collect gets its turn in between
                 ran = True
                 try:
-                    outs = self.d.executor.evaluate(model_id, base_doc, missing, f"axonry-{rules['base']}")
+                    outs = self.d.executor.evaluate(model_id, base_doc, missing, self._salt(rules))
                 except Exception as e:
                     if model_id.startswith("base:"):   # the base model's own job: always ours
                         return self._backoff(s, f"base evaluation: {e}")
@@ -680,7 +681,7 @@ class Orchestrator:
             return
         try:
             publisher.publish_score(self.d.public, model_id, {
-                "base": rules["base"], "rules_sha256": rules.sha256,
+                "base": rules["base"], "rules_sha256": rules.sha256, "generated": self._generated(rules),
                 "benchmarks": {k: {"acc": round(judge.accuracy(res[k]), 4), "n": len(res[k])}
                                for k in rules.benchmark_keys()}})
         except ImmutableObjectError:
@@ -703,6 +704,14 @@ class Orchestrator:
             elif s["status"] == "SCORED":
                 self._decide_one(s)
 
+    @staticmethod
+    def _salt(rules):
+        """The sampling salt of a line's evaluations: a model's results are generated once and reused in every match."""
+        return f"axonry-{rules['base']}"
+
+    def _generated(self, rules):
+        return {"salt": self._salt(rules), "image": self.d.eval_image}
+
     def _decide_one(self, s):
         """One match: the submission against the champion of this moment only (the base model while its line has no
         champion yet)."""
@@ -720,7 +729,7 @@ class Orchestrator:
             acc, c = judge.accuracy(mine[k]), cmp["benchmarks"][k]
             ref_acc = acc - c["d"]                 # paired on the same items: d is the difference of the means
             benches[k] = {"acc": round(acc, 4), "n": len(mine[k]),
-                          "vs_champion": {"ref": ref_id, "ref_acc": round(ref_acc, 4), **c,
+                          "vs_champion": {"ref": ref_id, "ref_acc": round(ref_acc, 4), **c, "params": params[k],
                                           # the scores this run had to reach: not worse / a win, on this benchmark
                                           "tie_at": round(ref_acc - max(rules["judge"]["z_tie"] * c["se"],
                                                                         params[k]["eps_tie"]), 4),
@@ -729,7 +738,8 @@ class Orchestrator:
         decision = "NEW_CHAMPION" if cmp["dominates"] else "NOT_DOMINATING"
         publisher.publish_score(self.d.public, sid, {
             "base": base, "rules_sha256": rules.sha256, "model_digest": rec.get("model_digest"),
-            "judge": rules["judge"], "benchmarks": benches, "wins": cmp["wins"], "tie_all": cmp["tie_all"],
+            "judge": rules["judge"], "generated": self._generated(rules), "benchmarks": benches,
+            "wins": cmp["wins"], "tie_all": cmp["tie_all"],
             "dominates_champion": cmp["dominates"], "decision": decision, "decided_block": head})
         self.db.update(sid, "PUBLISHED", reason_code=decision, decided_at=self.d.clock(), record_patch={
             "decision": decision, "wins": cmp["wins"], "reference": ref_id,
@@ -765,7 +775,8 @@ class Orchestrator:
     # ------------------------------------------------------------------------------------------- publication
     def _publish_record(self, sid):
         s = self.db.sub(sid)
-        rec = {**s["record"], "status": s["status"], "reason_code": s["reason_code"], "reason": s["reason"]}
+        rec = {**s["record"], "coldkey": s["coldkey"], "status": s["status"], "reason_code": s["reason_code"],
+               "reason": s["reason"]}
         publisher.publish_submission(self.d.public, sid, rec)
 
     def _publish_line(self, base):

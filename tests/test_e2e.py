@@ -392,6 +392,11 @@ def test_full_flow(tmp_path, capsys):
     sid_a, sid_b = "0000000101-0002", "0000000102-0002"
     score = json.loads(pub.get(layout.submission(sid_a, "score.json")))
     assert score["dominates_champion"] and score["wins"] >= 2
+    vs = score["benchmarks"]["math500@1"]["vs_champion"]        # the match can be redone from this file alone
+    assert {"ref", "ref_acc", "d", "se", "tie_ok", "win", "tie_at", "win_at"} <= set(vs)
+    assert set(vs["params"]) >= {"eps_tie", "delta_win"} and score["judge"]["n_win"] >= 1
+    assert score["generated"]["salt"].startswith("axonry-") and score["rules_sha256"]
+    assert json.loads(pub.get(layout.submission(sid_a, "submission.json")))["coldkey"] == COLDKEYS["A"]
     adm = json.loads(pub.get(layout.submission(sid_b, "admission.json")))
     assert not adm["passed"] and "relative change" in adm["violations"][0]
     import gzip
