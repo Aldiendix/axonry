@@ -113,6 +113,7 @@ EOF
 
   # the jump user: forwarding to one container port per key (authorized_keys), nothing else
   id $JUMP >/dev/null 2>&1 || useradd -m -s "$(command -v nologin)" $JUMP
+  usermod -p "*" $JUMP     # key login only; a locked account ("!") is refused by sshd without PAM
   install -d -m 700 -o $JUMP -g $JUMP /home/$JUMP/.ssh
   touch /home/$JUMP/.ssh/authorized_keys
   chown $JUMP:$JUMP /home/$JUMP/.ssh/authorized_keys && chmod 600 /home/$JUMP/.ssh/authorized_keys
