@@ -255,7 +255,8 @@ def detail(reader, status, matches, key, color=None) -> str:
     live = next((r for k in ("review", "queue", "running", "evaluating", "waiting") for r in status.get(k, [])
                  if r["sid"] == sid), None)
     if live and not sub.get("status"):          # an entry still in progress: its live row
-        sub = {**sub, "status": live["status"], "reason_code": live.get("reason_code"), "reason": live.get("reason")}
+        sub = {**sub, "status": live["status"], "reason_code": live.get("reason_code"), "reason": live.get("reason"),
+               "pr": sub.get("pr") or ({"number": live["pr"], "title": live.get("title")} if live.get("pr") else None)}
     status_ = sub.get("status") or next((r["status"] for r in (matches or {}).get("rows", []) if r["sid"] == sid), "?")
     head(f"ENTRY {sid}")
     kv("status", st(f"{status_} {sub.get('reason_code') or ''}".strip(), BOLD))
