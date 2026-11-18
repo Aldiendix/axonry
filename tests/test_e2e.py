@@ -305,7 +305,7 @@ def make(tmp_path):
                 public=pub, private=priv, owner_keypair=OWNER, comp_rules=COMP_RULES,
                 price_at=lambda ts: (500.0, {"x": 500.0, "y": 500.0}), scan_prs=gh.candidates,
                 clock=clock, work_dir=tmp_path / "work")
-    deps.registry_root = registry_copy(tmp_path, initial_champion=None)
+    deps.registry_root = registry_copy(tmp_path, initial_champion=None, effective_block=0)   # not launched
     return Orchestrator(deps), chain, clock, pub
 
 
@@ -951,7 +951,7 @@ def test_the_evaluation_machine_is_kept_while_a_run_waits_to_be_collected(tmp_pa
 def test_the_first_intake_starts_at_the_first_seasons_effective_block(tmp_path):
     orch, chain, clock, pub = make(tmp_path)
     chain.head = 120
-    with pytest.raises(ValueError, match="effective_block"):     # the registry's s1 is not launched (block 0)
+    with pytest.raises(ValueError, match="effective_block"):     # s1 not launched (block 0)
         orch.intake()
     orch.d.registry_root = registry_copy(tmp_path, effective_block=105)
     read, items = [], chain.items_in_block

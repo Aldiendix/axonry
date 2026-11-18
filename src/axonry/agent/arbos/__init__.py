@@ -79,21 +79,23 @@ class ArbosRunner:
 
     @classmethod
     def from_config(cls, section: dict):
-        """[agent.arbos] bin, instructions, accounts = [{name, runs}]; tokens from `python -m axonry.agent.arbos.auth
+        """[agent.arbos] bin, instructions, accounts = [{name, runs}], models (the projects' model slots); tokens from `python -m axonry.agent.arbos.auth
         --account NAME` (refreshed automatically)."""
         from . import auth  # noqa: PLC0415
         accounts = {a["name"]: int(a["runs"]) for a in section.get("accounts") or [{"name": "main", "runs": 6}]}
         return cls(accounts, section.get("bin", "arbosctl"), auth.arbosctl_config,
                    instructions=section.get("instructions", ""), refresh=auth.ensure_fresh,
-                   exec_prefix=section.get("exec_prefix") or [])
+                   exec_prefix=section.get("exec_prefix") or [], models=section.get("models"),
+                   set_models=auth.set_models)
 
     def __init__(self, accounts: dict, arbosctl="arbosctl", config_of=None, instructions="", runner=None,
-                 refresh=None, exec_prefix=()):
+                 refresh=None, exec_prefix=(), models=None, set_models=None):
         """accounts: {name: runs at once}. config_of(name) -> arbosctl config path; refresh(name) keeps its token
         fresh (axonry.agent.arbos.auth); both None in tests. exec_prefix: command prefix for arbosctl, e.g. a proxy
         wrapper where the host has no direct internet (arbosctl's chat WebSocket ignores HTTP proxy settings)."""
         self.accounts, self.bin, self.instructions = accounts, arbosctl, instructions
         self.config_of, self.refresh = config_of, refresh
+        self.models, self.set_models = models, set_models
         self.prefix = [os.path.expanduser(str(x)) for x in exec_prefix]
         self._run = runner or self._subprocess
 
@@ -164,6 +166,11 @@ class ArbosRunner:
     def prepare(self, sid, hotkey, busy=()) -> RunHandle:
         account = self.pick(busy)
         project = self.ensure_project(account, hotkey)
+        if self.models and self.set_models:     # every run: a hotkey's project is reused across runs
+            try:
+                self.set_models(account, project, self.models)
+            except Exception as e:
+                raise ArbosError(f"arbos project {project}: setting models failed: {e}") from e
         opened = self._json(account, "chat", "open", project, "--title", f"submission {sid}")
         chat = opened.get("id") or opened.get("chat", {}).get("id")
         if not chat:

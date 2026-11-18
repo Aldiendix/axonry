@@ -43,9 +43,10 @@ def arbosctl_config(account: str) -> Path:
     return DIR / account / "arbosctl.json"
 
 
-def _post(url, body):
-    req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
-                                 headers={"Content-Type": "application/json", "User-Agent": "axonry-orchestrator"})
+def _post(url, body, method="POST", token=None):
+    headers = {"Content-Type": "application/json", "User-Agent": "axonry-orchestrator",
+               **({"Authorization": f"Bearer {token}"} if token else {})}
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             return json.loads(r.read())
@@ -107,6 +108,13 @@ def ensure_fresh(account, margin=600):
             return doc
         return _save(account, doc["relay"], _post(f"{doc['relay']}/auth/refresh",
                                                   {"refresh_token": doc["refresh_token"]}))
+
+
+def set_models(account, project, models: dict):
+    """The project's model slots (talking_model, subagent_model, decision_model: {id, effort}); arbosctl has no
+    command for it, the apps use PATCH /projects/{id}."""
+    doc = ensure_fresh(account)
+    return _post(f"{doc['relay']}/projects/{project}", {"models": models}, "PATCH", doc["access_token"])
 
 
 def import_accounts(path, relay=RELAY):

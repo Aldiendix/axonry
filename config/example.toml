@@ -71,6 +71,11 @@ accounts = [{ name = "main", runs = 6 }]  # each account has one 8-CPU/16-GiB bo
 # exec_prefix = ["proxychains4", "-q", "-f", "~/.config/axonry/proxychains.conf"]   # only without direct internet
 instructions = "You run weight-editing competition tasks. Follow BRIEF.md exactly; it is authoritative. Work only inside your workspace folder: never use /tmp, /dev/shm or any other shared directory."
 
+[agent.arbos.models]                      # set on each run's project (arbos' defaults otherwise)
+talking_model = { id = "anthropic/claude-opus-5.5", effort = "high" }
+subagent_model = { id = "anthropic/claude-opus-5.5", effort = "high" }
+decision_model = { id = "anthropic/claude-haiku-5.5", effort = "off" }
+
 [state]
 db = ".state/axonry.sqlite"
 work_dir = ".state/work"

@@ -22,7 +22,7 @@
   "repo": "AxOrganization/WeightSpaceProgramming",
   "rules_sha256": "53ce964560d57d8dfb3995ab41e0fabb76c4247c17be126c5c7ba49a2b9328cb"
  },
- "effective_block": 0,
+ "effective_block": 9538688,
  "fee": {
   "assets": [
    "tao",
@@ -49,7 +49,7 @@
   "gpu_model": "RTX 4090",
   "gpus": 4,
   "hours": 6,
-  "max_agent_usd": 50,
+  "max_agent_usd": 100,
   "max_job_failures": 2,
   "stall_minutes": 20,
   "wrap_minutes": [

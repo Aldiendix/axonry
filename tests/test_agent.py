@@ -2,7 +2,7 @@
 import json
 
 from axonry.agent import supervisor
-from axonry.agent.arbos import ArbosError, ArbosRunner, busy
+from axonry.agent.arbos import ArbosError, ArbosRunner, busy, project_name
 from axonry.agent.base import RunHandle, RunStatus
 
 T0 = 1_800_000_000
@@ -116,3 +116,19 @@ def test_keep_alive_refreshes_every_account():
         done.append(account)
     ArbosRunner({"a": 1, "b": 1, "c": 1}, runner=lambda *a: (0, "", ""), refresh=refresh).keep_alive()
     assert done == ["b", "c"]
+
+
+def test_each_run_sets_the_project_models(monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    def run(account, args, timeout):
+        if args[1:3] == ["machine", "status"]:
+            return 0, json.dumps({}), ""
+        if args[1:3] == ["project", "list"]:
+            return 0, json.dumps([{"name": project_name("hk"), "id": "P1"}]), ""
+        return 0, json.dumps({"id": "C1"}), ""
+    set_to = []
+    models = {"subagent_model": {"id": "anthropic/claude-opus-5.5", "effort": "high"}}
+    r = ArbosRunner({"a": 1}, runner=run, models=models, set_models=lambda *a: set_to.append(a))
+    h = r.prepare("s1", "hk")
+    assert (h.workspace, h.chat) == ("P1", "C1") and set_to == [("a", "P1", models)]
