@@ -1,11 +1,11 @@
-"""Evaluation of one model on every benchmark of the season, on the rented evaluation machine (axonry installed by
+"""Evaluation of one model on every benchmark of the rules, on the rented evaluation machine (axonry installed by
 pool/setup.sh; the competition toolkit at /srv/axonry/repos/WeightSpaceProgramming, on PYTHONPATH).
 
 One vLLM server spans all evaluation GPUs (data parallel). Every (item, sample) of every benchmark, in benchmark
 order, is one request of a single stream kept at `concurrency` in flight: a slot freed by any answer takes the next
 request, so the GPUs stay full and no benchmark waits for another's long tail. Prompts, per-request seeds
 (wsp.common.stable_seed: item id, sample, salt) and grading are the toolkit's own, so a model is paired with every
-other model of the season item by item.
+other model of the same base item by item.
 
 Each graded answer is appended to <out>/<key>.part.jsonl at once; a rerun skips what is there. A benchmark's file
 becomes <out>/<key>.jsonl when it is complete. Exit codes: 0 done; 3 the frozen item set does not match (ours, never

@@ -1,6 +1,6 @@
-"""axonry-miner board: the subnet at a glance, from public data only (status.json, matches.json).
+"""axonry-miner board: the subnet at a glance, from public data only (status.json, models/<base>/line.json).
 
-  1. Champion and queue   the champion (a season may open with an initial champion held by uid 0), then every
+  1. Champion and queue   the champion (none yet: the base model, weight burned at uid 0), then every
                           submission in the queue, in priority order; a run shows its time left, GPU use and the
                           agent's progress line
   2. Not in queue         submissions waiting (no PR yet, fee not covered, ...) or stopped before a run (and why),
@@ -82,7 +82,7 @@ def table(title, headers, rows, st, right=()):
     return "\n".join([st(title, BOLD), line(headers, True), rule, *(line(r) for r in rows)]) + "\n"
 
 
-def board(status: dict, matches: dict | None, n=20, color=None) -> str:
+def board(status: dict, line: dict | None, n=20, color=None) -> str:
     st = Style(sys.stdout.isatty() and not os.environ.get("NO_COLOR") if color is None else color)
     miners = {m["hotkey"]: m for m in status.get("miners", [])}
     repo = status.get("repo")
@@ -95,7 +95,7 @@ def board(status: dict, matches: dict | None, n=20, color=None) -> str:
         return hk[:10] + "…" if hk else "-"
 
     def pr(n_, title):
-        if not n_:                     # no PR: the initial champion, shown by its description
+        if not n_:
             return clean(title, 28) if title else st("-", DIM)
         url = f"https://github.com/{repo}/pull/{n_}" if repo else None
         return st.link(f"#{n_}", url) + (" " + clean(title, 28) if title else "")
@@ -105,11 +105,8 @@ def board(status: dict, matches: dict | None, n=20, color=None) -> str:
     champ = status.get("champion")
     if champ:
         online = champ["hotkey"] in miners
-        if champ.get("initial"):
-            detail = "the season's initial champion: weight burned (uid 0)"
-        else:
-            detail = "receives all weight" if online else st("deregistered: weight burned (uid 0)", RED)
-        rows.append([st("★", YELLOW), uid(champ["hotkey"]) if champ["hotkey"] else "0", hot(champ["hotkey"]),
+        detail = "receives the weight" if online else st("deregistered: weight burned (uid 0)", RED)
+        rows.append([st("★", YELLOW), uid(champ["hotkey"]), hot(champ["hotkey"]),
                      champ["sid"], pr(champ.get("pr"), champ.get("title")), st("CHAMPION", BOLD, YELLOW), detail])
     else:
         rows.append([st("★", YELLOW), st("-", DIM), "-", "-", "base model", st("CHAMPION", BOLD, YELLOW),
@@ -120,7 +117,7 @@ def board(status: dict, matches: dict | None, n=20, color=None) -> str:
     for i, x in enumerate(queue, 1):
         label, col = STAGE.get(x["status"], (x["status"].lower(), ""))
         run = (miners.get(x["hotkey"]) or {}).get("run") or {}
-        live = " · ".join(t for t in (f"{_left(x.get('deadline'), now)} left", clean(run.get("note"))) if t)
+        live = " · ".join(t for t in (f"{_left(run.get('deadline'), now)} left", clean(run.get("note"))) if t)
         detail = {"RUNNING": clean(live, 70),
                   "QUEUED": f"position {x.get('position', '-')}: waiting for a machine",
                   "STARTING": "its machine is being set up",
@@ -152,7 +149,7 @@ def board(status: dict, matches: dict | None, n=20, color=None) -> str:
     out.append(table("2. Not in queue", ["UID", "HOTKEY", "SID", "PR", "STATUS", "DETAIL"], rows, st, right=(0,)))
 
     # 3. recent matches
-    decided = sorted((r for r in (matches or {}).get("rows", []) if r.get("scores")),
+    decided = sorted((r for r in (line or {}).get("entries", []) if r.get("scores")),
                      key=lambda r: r.get("decided_at") or 0, reverse=True)[:n]
     benches = list(dict.fromkeys(k for r in decided for k in r["scores"]))
     rows = []
@@ -187,11 +184,11 @@ def _left(deadline, now):
 SID = re.compile(r"^\d{10}-\d{4}$")
 
 
-def find(status, matches, key):
+def find(status, line, key):
     """-> (miner row or None, sid or None, coldkey or None) for a uid, hotkey (or its first 6+ characters), coldkey or
     submission id."""
     miners = status.get("miners", [])
-    rows = (matches or {}).get("rows", [])
+    rows = (line or {}).get("entries", [])
     if SID.match(key):
         hk = next((r["hotkey"] for r in rows if r["sid"] == key), None)
         m = next((m for m in miners if hk and m["hotkey"] == hk), None)
@@ -211,9 +208,9 @@ def find(status, matches, key):
     return None, None, None
 
 
-def detail(reader, status, matches, key, color=None) -> str:
+def detail(reader, status, line, key, color=None) -> str:
     st = Style(sys.stdout.isatty() and not os.environ.get("NO_COLOR") if color is None else color)
-    m, sid, coldkey = find(status, matches, key)
+    m, sid, coldkey = find(status, line, key)
     if not (m or sid or coldkey):
         return f"no miner, coldkey or submission matches {key!r}"
     now = status.get("updated_at") or time.time()
@@ -254,7 +251,7 @@ def detail(reader, status, matches, key, color=None) -> str:
     if live and not sub.get("status"):          # an entry still in progress: its live row
         sub = {**sub, "status": live["status"], "reason_code": live.get("reason_code"), "reason": live.get("reason"),
                "pr": sub.get("pr") or ({"number": live["pr"], "title": live.get("title")} if live.get("pr") else None)}
-    status_ = sub.get("status") or next((r["status"] for r in (matches or {}).get("rows", []) if r["sid"] == sid), "?")
+    status_ = sub.get("status") or next((r["status"] for r in (line or {}).get("entries", []) if r["sid"] == sid), "?")
     head(f"ENTRY {sid}")
     kv("status", st(f"{status_} {sub.get('reason_code') or ''}".strip(), BOLD))
     if sub.get("reason"):
@@ -293,23 +290,18 @@ def detail(reader, status, matches, key, color=None) -> str:
     score = reader.get(layout.submission(sid, "score.json"))
     if score:
         bs = score["benchmarks"]
-        if score["decision"] == "INITIAL_CHAMPION":
-            head("RESULT the season's initial champion (it plays no match)")
-            rows = [[k.split("@")[0], f"{b['acc']:.2f}"] for k, b in bs.items()]
-            out.append(table("", ["BENCHMARK", "ACC"], rows, st, right=(1,)).split("\n", 1)[1].rstrip())
-        else:
-            ref = next(iter(bs.values()))["vs_champion"]["ref"]
-            won = score["decision"] == "NEW_CHAMPION"
-            head(f"RESULT {st(score['decision'], GREEN if won else '')} vs {ref}: {score['wins']} wins "
-                 f"(needs {score['judge']['n_win']}), not worse on all: {'yes' if score['tie_all'] else 'no'}")
-            rows = []
-            for k, b in bs.items():
-                c = b["vs_champion"]
-                rows.append([k.split("@")[0], f"{b['acc']:.2f}", f"{c['ref_acc']:.2f}", f"{c['d']:+.2f}", f"{c['se']:.2f}",
-                             f"{c['tie_at']:.2f}", f"{c['win_at']:.2f}",
-                             st("win", GREEN) if c["win"] else (st("not worse", "") if c["tie_ok"] else st("worse", RED))])
-            out.append(table("", ["BENCHMARK", "ACC", "CHAMPION", "D", "SE", "NOT-WORSE AT", "WIN AT", "VERDICT"], rows,
-                             st, right=(1, 2, 3, 4, 5, 6)).split("\n", 1)[1].rstrip())
+        ref = next(iter(bs.values()))["vs_champion"]["ref"]
+        won = score["decision"] == "NEW_CHAMPION"
+        head(f"RESULT {st(score['decision'], GREEN if won else '')} vs {ref}: {score['wins']} wins "
+             f"(needs {score['judge']['n_win']}), not worse on all: {'yes' if score['tie_all'] else 'no'}")
+        rows = []
+        for k, b in bs.items():
+            c = b["vs_champion"]
+            rows.append([k.split("@")[0], f"{b['acc']:.2f}", f"{c['ref_acc']:.2f}", f"{c['d']:+.2f}", f"{c['se']:.2f}",
+                         f"{c['tie_at']:.2f}", f"{c['win_at']:.2f}",
+                         st("win", GREEN) if c["win"] else (st("not worse", "") if c["tie_ok"] else st("worse", RED))])
+        out.append(table("", ["BENCHMARK", "ACC", "CHAMPION", "D", "SE", "NOT-WORSE AT", "WIN AT", "VERDICT"], rows,
+                         st, right=(1, 2, 3, 4, 5, 6)).split("\n", 1)[1].rstrip())
     ruling = reader.get(layout.submission(sid, "ruling.json"))
     if ruling:
         head(st("DISQUALIFIED by the owner", RED))
@@ -329,14 +321,13 @@ def cmd_board(reader, n=20, color=None, watch=0, miner=None):
     in full instead of the overview."""
     while True:
         status = reader.get(layout.STATUS)
-        season = status and (status.get("season") or reader.current_season())
-        matches = reader.get(layout.season_file(season, "matches.json")) if season else None
+        line = reader.get(layout.line(status["base"])) if status and status.get("base") else None
         if not status:
             text = "no status published yet"
         elif miner:
-            text = detail(reader, status, matches, miner, color)
+            text = detail(reader, status, line, miner, color)
         else:
-            text = board(status, matches, n, color)
+            text = board(status, line, n, color)
         if status and reader.base:
             text += (f"\n\nMore detail: {DASHBOARD}\nData: {reader.base}/{layout.STATUS}")
         print(("\033[H\033[2J" if watch else "") + text, flush=True)

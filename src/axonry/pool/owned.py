@@ -10,7 +10,7 @@ the same tools. pool/host.sh does the host's side (over ssh as root, on the host
          processes fails it: freeing them is the operator's call.
   bake   once per setup bundle, on run hosts: the image + setup.sh committed as axonry-run:<bundle sha>, so a run's
          container holds everything it needs (no download, no setup by the agent) and is up in seconds.
-  eval   once per setup bundle, on the evaluation host: its container set up, with the season's benchmark items
+  eval   once per setup bundle, on the evaluation host: its container set up, with the rules' benchmark items
          built by the orchestrator and checked against their manifests (evaluation/benchdata.py; never on a run
          host).
 

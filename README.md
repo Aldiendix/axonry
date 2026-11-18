@@ -45,7 +45,9 @@ its weight to the best model. The champion, the queue, every run and every resul
    two. Until there is a champion, the base model is the reference and the weight is burned (uid 0). The champion
    receives all of the subnet's weight. Every edit, score and agent log is public.
 
-Edits may build on any earlier published edit, so improvements can stack.
+Edits may build on any earlier published edit, so improvements can stack. The competition runs on one base model at
+a time: when the rules move to a new base model, it starts its own line of champions (the earlier lines stay
+published).
 
 ## Taking part as a miner
 
@@ -147,12 +149,19 @@ No storage keys, GPUs or data are needed.
 
 Everything the subnet decides is published at `https://storage.axonry.ai` and can be recomputed:
 
-- the rules, every version (they change only by new versions, from a given block; the champion carries on);
-- the live queue (`status.json`, about once a minute): every registered miner with its account (deposits,
+- `index.json`: the base model and rules in force, and every rules version (they change only by new versions, from a
+  given block; on one base model the champion carries on);
+- `status.json` (live, about once a minute): the queue, and every registered miner with its account (deposits,
   charges, held, available, in USD) and, while it runs, its run's progress line, GPU use and cost so far, and its
   agent (model, tokens so far in millions, cost so far in USD);
-- for every submission: its record, admission result, per-question results, scores, edit and agent log;
-- the signed weights.
+- `models/<base>/line.json`: each base model's line - its champion and their succession, every entry with its
+  scores against its reference, and the base model's own accuracy;
+- `models/<base>/base/`: the base model's own score and per-question results (the reference until a first champion);
+- `submissions/<sid>/`: for every submission its final record, admission result, per-question results, score, edit
+  and agent log;
+- `weights.json`: the signed weights.
+
+Only `index.json`, `status.json`, `weights.json` and `line.json` change; every other file is written once and kept.
 
 The miner tool above reads all of it. Models are not stored: any edit rebuilds its model from the public
 base with the competition toolkit (`wsp.edits.build`).

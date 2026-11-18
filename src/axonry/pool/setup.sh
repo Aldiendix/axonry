@@ -15,7 +15,7 @@ trap 'echo "setup failed at line $LINENO" >&2; mkdir -p $R; touch $R/FAILED' ERR
 
 test "$(nvidia-smi -L | wc -l)" -eq "$1"
 
-# pinned: graders and loaders must not change under a season (verified together, 2026-11-16)
+# pinned: graders and loaders must not change under a rules version (verified together, 2026-11-16)
 pip install -q --no-cache-dir math-verify==0.9.0 lm-eval==0.4.13 langdetect==1.0.9 immutabledict==4.3.1 nltk==3.10.4 \
   datasets==5.2.0 flash-linear-attention==0.6.0 boto3==1.43.123
 # IFEval's sentence tokenizer, from the bundle (pinned by the orchestrator); nltk reads no data that other accounts
@@ -38,7 +38,7 @@ for doc in "$B"/bases/*.json; do
   d=$(basename "$doc" .json)
   python3 "$B/stage_base.py" "$doc" "$R/models/$d"
   ln -sfn "$R/models/$d" "/workspace/models/$d"
-  ln -sfn "$R/models/$d" /workspace/base       # one base per season
+  ln -sfn "$R/models/$d" /workspace/base       # the base model of the rules in force
 done
 ln -sfn $R/repos/WeightSpaceProgramming /workspace/WeightSpaceProgramming
 chmod -R a+rX,go-w $R/models $R/repos

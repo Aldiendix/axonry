@@ -1,4 +1,4 @@
-"""Dress rehearsal of a live season on real infrastructure (owner tooling; never part of a live season).
+"""Dress rehearsal on real infrastructure (owner tooling; never part of the live competition).
 
   axonry-orchestrator rehearse [--hours H] [--limit N] [--samples K] [--fresh]
 
@@ -10,8 +10,8 @@ the way a validator checks them.
 Simulated: the chain (SimChain: a block every 12 s; registrations; the miners' transfers and remarks are decoded by
 the real extrinsic parser), GitHub (SimGitHub: the REST endpoints axonry calls, served from memory, so the real client
 code runs: PR scan, commit-bound reviews, lock tags, merges, comments) and the miners (SCENARIO below). The public
-bucket is a local directory; weights are signed with a throwaway owner key; the season is a scaled copy of the
-current one (shorter runs, fewer items), generated under .state/rehearsal and never committed.
+bucket is a local directory; weights are signed with a throwaway owner key; the rules are a scaled copy of the
+current ones (shorter runs, fewer items), generated under .state/rehearsal and never committed.
 """
 import base64
 import hashlib
@@ -35,12 +35,11 @@ BLOCK_SECONDS, FINALITY = 12, 2
 
 
 # ------------------------------------------------------------------------------------------------ registry
-def overridden_registry(root: Path, limit=None, samples=None, season=None, rules_patch=None) -> Path:
-    """A local copy of the registry (never committed) with smaller benchmark runs and/or a patched season."""
+def overridden_registry(root: Path, limit=None, samples=None, rules_patch=None) -> Path:
+    """A local copy of the registry (never committed) with smaller benchmark runs and/or patched rules: the latest
+    rules version only, as its base's one version."""
     shutil.rmtree(root, ignore_errors=True)
     shutil.copytree(registry.ROOT / "bases", root / "bases")
-    if (registry.ROOT / "initial").exists():
-        shutil.copytree(registry.ROOT / "initial", root / "initial")
     (root / "benchmarks").mkdir(parents=True)
     latest = registry.latest_rules().doc
     for b in latest["benchmarks"]:
@@ -48,11 +47,9 @@ def overridden_registry(root: Path, limit=None, samples=None, season=None, rules
         doc = {**doc, **({"limit": limit} if limit else {}), **({"samples_per_item": samples} if samples else {})}
         write_json(root / "benchmarks" / f"{b['key']}.json", doc)
     rules = json.loads(json.dumps(latest))
-    if season:
-        rules.update(season=season, effective_block=0)
     if rules_patch:
         rules_patch(rules)
-    write_json(root / "seasons" / rules["season"] / "v1.json", rules)
+    write_json(root / "rules" / rules["base"] / "v1.json", rules)
     return root
 
 
@@ -307,7 +304,7 @@ def entry(base, parent=None):
 
 
 def scenario(world):
-    """The miners, as in a live season. Expected outcomes are written next to each step; the report compares."""
+    """The miners, as in the live competition. Expected outcomes are written next to each step; the report compares."""
     base = world.rules["base"]
     alice, bob, carol, dave, erin, frank = (world.miner(n) for n in ("alice", "bob", "carol", "dave", "erin", "frank"))
     for m in (alice, bob, carol, dave):
@@ -329,9 +326,8 @@ def scenario(world):
     sf = world.commit(frank, a_files)
     world.expect_status(sf, "REJECTED", "COPY")
 
-    # bob: an independent method stacked on the initial champion, committed after alice: queued behind her
-    initial = make_sid(world.rules["effective_block"], 0)
-    b_files = {"entry.json": entry(base, parent=initial), "METHOD.md": STOP_METHOD.encode()}
+    # bob: an independent method, committed after alice: queued behind her
+    b_files = {"entry.json": entry(base), "METHOD.md": STOP_METHOD.encode()}
     sb = world.commit(bob, b_files)
     world.expect_carried(world.open_pr(bob, b_files), sb)
 
@@ -369,7 +365,6 @@ def scenario(world):
     world.expect_final(sb)
     world.expect_billed(sa)
     world.expect_billed(sb)
-    world.expect_stacked(sb, initial)
 
 
 # ------------------------------------------------------------------------------------------------ world
@@ -490,13 +485,6 @@ class World:
                    f"charged {got / 1e6:.4f} USD for {((t.get('agent_end') or 0) - t['kickoff']) / 3600:.2f} h "
                    f"(at most {self.run_usd:.2f})")
 
-    def expect_stacked(self, sid, parent):
-        """A stacked entry's upload is a layer on its parent: built on the published chain and admitted."""
-        s, adm = self.db.sub(sid), self.public.get(layout.submission(sid, "admission.json"))
-        adm = json.loads(adm) if adm else {}
-        self.check(f"{sid} stacked on {parent} and admitted", s["record"].get("parent") == parent and adm.get("passed"),
-                   f"parent {s['record'].get('parent')}, admission {adm.get('passed')} {adm.get('violations') or ''}")
-
     def expect_final(self, sid, timeout=12 * 3600):
         got = self._wait(lambda: (self.db.sub(sid) or {}).get("status") in ("PUBLISHED", "REJECTED", "FAILED", "DISQUALIFIED"),
                          timeout)
@@ -531,7 +519,7 @@ def run(cfg, hours=1.5, limit=40, samples=1, fresh=False, review_command=None):
     treasury = Keypair.create_from_uri("//rehearsal-treasury").ss58_address
 
     chain = SimChain(registry.latest_rules()["netuid"])
-    prev = HOME / "registry" / "seasons" / "rehearsal" / "v1.json"     # a resumed rehearsal keeps its opening block
+    prev = HOME / "registry" / "rules" / registry.latest_rules()["base"] / "v1.json"   # a resumed one keeps its block
     opened = (json.loads(prev.read_text())["effective_block"] if prev.exists() and not fresh
               else chain.finalized_head() + 1)
 
@@ -540,11 +528,11 @@ def run(cfg, hours=1.5, limit=40, samples=1, fresh=False, review_command=None):
         rules["fee"].update(treasury=treasury, assets=["tao"])
         rules["review"]["reviewers"] = [REVIEWER]
         rules["run"].update(hours=hours, wrap_minutes=[min(30, int(hours * 60 / 4)), min(10, int(hours * 60 / 8))])
-    reg = overridden_registry(HOME / "registry", limit, samples, season="rehearsal", rules_patch=patch)
-    rules = registry.load_rules_versions("rehearsal", reg)[-1]
+    reg = overridden_registry(HOME / "registry", limit, samples, rules_patch=patch)
+    rules = registry.latest_rules(reg)
     comp_rules = competition_rules(cfg.path_of("competition.local_path"), rules)
     repo = SimRepo(rules["competition"]["repo"])
-    # the rehearsal's own corner of the private bucket: nothing it writes can collide with a live season's keys
+    # the rehearsal's own corner of the private bucket: nothing it writes can collide with the live keys
     public = private_store(cfg, "rehearsal/public/", public=True)
     private = private_store(cfg, "rehearsal/private/")
     if fresh:
@@ -602,8 +590,8 @@ def validate_weights(world, public, owner, netuid, chain):
     from axonry_validator.main import check, resolve  # noqa: PLC0415
     doc = json.loads(public.get("weights.json"))
     problem = check(doc, owner, netuid, 0)
-    champ = world.db.champion("rehearsal")
-    want = {chain.uids[champ["hotkey"]]: 1.0} if champ and champ["hotkey"] else {0: 1.0}   # initial champion: uid0
+    champ = world.db.champion(world.rules["base"])
+    want = {chain.uids[champ["hotkey"]]: 1.0} if champ else {0: 1.0}           # no champion: burned (uid0)
     got = resolve(doc, chain.uid_hotkeys(netuid)) if problem is None else None
     world.check("validator accepts weights.json and sets them to the champion", problem is None and got == want,
                 f"{problem or got} (champion {champ['sid'] if champ else 'base'})")

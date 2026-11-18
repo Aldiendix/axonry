@@ -166,7 +166,7 @@ def punkt_tab(cache: Path) -> bytes:
 
 def setup_bundle(project: Path, competition: Path, base_docs: list, bench_docs: list, dest: Path) -> Path:
     """What setup.sh installs: our package (as the working tree has it), the competition repo at its checked-out
-    commit (the orchestrator refuses to start unless that is the season's pin), the season's base definitions, its
+    commit (the orchestrator refuses to start unless that is the rules' pin), the rules' base definitions, its
     benchmarks (key, task, frozen manifest: what an owned evaluation host checks its items against) and nltk's
     tokenizer data."""
     from ..evaluation import benchdata  # noqa: PLC0415

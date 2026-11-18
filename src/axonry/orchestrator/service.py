@@ -14,17 +14,16 @@ One registration, one entry: a hotkey's first commitment on the subnet is its su
             machine released; the used time settled -> COLLECTING
   eval_machine  the evaluation machine: rented while there is admission or evaluation work, released when idle
   collect   staging upload -> admission on the evaluation machine               -> ADMITTED | REJECTED | FAILED
-  evaluate  ADMITTED -> benchmarks (the base first, once, if it is the reference)  -> SCORED
+  evaluate  ADMITTED -> benchmarks (the base model first, once: the reference)     -> SCORED
   decide    SCORED in priority order vs the champion of the moment               -> PUBLISHED (+ weights, merge)
   janitor   staging uploads of finished submissions; old state snapshots
-A season may open with an initial champion (rules "initial_champion", e.g. the paper's model): see _seed_initial.
+The competition runs on one base model at a time; each base has its own line of champions (registry.py).
 Every external system is injected (see Deps), so the whole flow runs against fakes in tests.
 
 Status values (public): WAITING REVIEW QUEUED RUNNING COLLECTING ADMITTED SCORED PUBLISHED REJECTED FAILED
 DISQUALIFIED
 Reason codes (public, stable): intake.binding (NO_PR, INSUFFICIENT_FUNDS, COPY, ...); CONFLICT, REVIEW_CHANGES,
-BAD_PARENT; NO_UPLOAD, BAD_UPLOAD, REJECTED_RULES, EVAL_ERROR; decisions NEW_CHAMPION, NOT_DOMINATING,
-INITIAL_CHAMPION.
+BAD_PARENT; NO_UPLOAD, BAD_UPLOAD, REJECTED_RULES, EVAL_ERROR; decisions NEW_CHAMPION, NOT_DOMINATING.
 """
 import io
 import json
@@ -42,6 +41,7 @@ from ..agent.base import RunHandle
 from ..chain.extrinsics import Deposit
 from ..common import layout
 from ..common.canon import pretty
+from ..common.store import ImmutableObjectError
 from ..common.ids import make_sid
 from ..evaluation import staging
 from ..evaluation.executor import JobFailed
@@ -75,7 +75,7 @@ class Deps:
     public: object                # ObjectStore (public bucket)
     private: object               # ObjectStore (private bucket)
     owner_keypair: object
-    comp_rules: dict              # competition repo rules.json at the season commit
+    comp_rules: dict              # competition repo rules.json at the pinned commit
     price_at: object              # ts -> (tao_usd, sources)
     scan_prs: object              # () -> [PRCandidate] (open PRs, head content)
     clock: object = time.time
@@ -96,7 +96,7 @@ class Orchestrator:
     def rules_for(self, sid) -> registry.Rules:
         """The rules version a submission entered under (recorded at entry; a later version never applies to it)."""
         rec = self.db.sub(sid)["record"]
-        for r in registry.load_rules_versions(rec["season"], self.d.registry_root):
+        for r in registry.load_rules_versions(self.db.sub(sid)["base"], self.d.registry_root):
             if r.sha256 == rec["rules_sha256"]:
                 return r
         raise registry.RegistryError(f"{sid}: rules {rec['rules_sha256'][:12]} not in the registry")
@@ -107,7 +107,7 @@ class Orchestrator:
     def _reject(self, sid, code, detail, final_status="REJECTED"):
         self.db.update(sid, final_status, reason_code=code, reason=detail, decided_at=self.d.clock())
         self._publish_record(sid)
-        self._publish_season(self.db.sub(sid)["season"])
+        self._publish_line(self.db.sub(sid)["base"])
         self._close_pr(sid, f"axonry: submission `{sid}` -> **{final_status} {code}**: {detail[:1000]}")
 
     def _close_pr(self, sid, text, merge_commit=None):
@@ -132,15 +132,12 @@ class Orchestrator:
         becomes its one and only submission; any later commitment of that hotkey counts for nothing. Then every
         submission before its lock is advanced."""
         head = self.d.chain.finalized_head()
-        rules = self._in_force(head)
-        if rules:
-            self._seed_initial(rules)
         cursor = self.db.get("cursor")
-        if cursor is None:       # deposits and commitments before the first season opened are never read
-            first = registry.load_rules_versions(registry.seasons(self.d.registry_root)[0], self.d.registry_root)
-            if first[0]["effective_block"] <= 0:
-                raise ValueError("the first season has no effective_block yet (the block it opens at)")
-            cursor = first[0]["effective_block"] - 1
+        if cursor is None:       # deposits and commitments before the first rules took effect are never read
+            first = registry.all_rules(self.d.registry_root)[0]
+            if first["effective_block"] <= 0:
+                raise ValueError("the first rules have no effective_block yet (the block they take effect at)")
+            cursor = first["effective_block"] - 1
             self.db.set("cursor", cursor)
         for b in range(cursor + 1, head + 1):
             try:
@@ -183,29 +180,13 @@ class Orchestrator:
                 self.db.of_hotkey(c.signer) or c.block < rules.doc.get("open_block", 0)):
             return
         sid = make_sid(c.block, c.extrinsic_index)
-        rec = {"hotkey": c.signer, "season": rules.season, "rules_sha256": rules.sha256,
+        rec = {"hotkey": c.signer, "rules_sha256": rules.sha256,
                "content_digest": c.content_digest, "github_id": c.github_id, "timeline": {"committed": c.timestamp}}
         first = self.db.first_with_digest(c.content_digest)
-        self.db.add_submission(sid, rules.season, c.signer, None, "WAITING", rec, content_digest=c.content_digest,
+        self.db.add_submission(sid, rules["base"], c.signer, None, "WAITING", rec, content_digest=c.content_digest,
                                prio=(c.block, c.extrinsic_index))
         if first:
             self._reject(sid, binding.COPY, f"this exact content was committed first by {first['hotkey']} ({first['sid']})")
-
-    def _seed_initial(self, rules):
-        """The season's initial champion (rules "initial_champion": a pinned edit in the registry) is the season's
-        first submission, <effective_block>-0000: extrinsic 0 of a block is its timestamp, never a commitment, so the
-        sid is free and comes before every miner. It has no hotkey, PR or run: it is admitted and evaluated like any
-        other entry and then becomes champion without a match, holding uid0 (its weight is burned). Miners stack on it
-        like on any published submission (entry.json parent)."""
-        iid = rules.doc.get("initial_champion")
-        sid = make_sid(rules["effective_block"], 0)
-        if not iid or self.db.sub(sid):
-            return
-        doc, _ = registry.load_initial(iid, self.d.registry_root)
-        rec = {"hotkey": None, "season": rules.season, "rules_sha256": rules.sha256, "initial": iid,
-               "base": doc["base"], "parent": None, "about": doc["about"], "timeline": {"seeded": self.now()}}
-        self.db.add_submission(sid, rules.season, None, None, "COLLECTING", rec, content_digest=None,
-                               prio=(rules["effective_block"], 0))
 
     # ------------------------------------------------------------------------------------------- advance
     PRE_LOCK = ("WAITING", "REVIEW")
@@ -311,7 +292,7 @@ class Orchestrator:
     def _set_stage(self, s, status, code, reason):
         if (s["status"], s["reason_code"], s["reason"]) != (status, code, reason):
             self.db.update(s["sid"], status, reason_code=code, reason=reason)
-            self._publish_season(s["season"])
+            self._publish_line(s["base"])
 
     @staticmethod
     def priority(s):
@@ -400,7 +381,7 @@ class Orchestrator:
         m = self.d.fleet.hand_over(sid, public_key, deadline)
         resources = self.d.fleet.probe(sid)
         creds = self.d.issue_creds(self.d.private, layout.staging_prefix(sid), ttl)
-        task = {"schema": "axonry.task/1", "sid": sid, "season": rules.season, "hotkey": s["hotkey"],
+        task = {"schema": "axonry.task/1", "sid": sid, "hotkey": s["hotkey"],
                 "base": rec["base"], "rules_sha256": rules.sha256,
                 "upload_protocol": self.d.comp_rules["upload"]["schema"],
                 "run": {"start": start, "deadline": deadline, "wrap_minutes": run["wrap_minutes"],
@@ -543,19 +524,16 @@ class Orchestrator:
             if not self._due(s):
                 continue
             sid, rec = s["sid"], s["record"]
-            if rec.get("initial"):
-                edit = registry.load_initial(rec["initial"], self.d.registry_root)[1]
-            else:
-                deadline = self.db.run(sid)["task"]["run"]["deadline"]
-                try:
-                    staging.collect(self.d.private, sid, deadline, Path(self.d.work_dir) / sid / "upload",
-                                    self.d.comp_rules["upload"])
-                except staging.UploadError as e:
-                    code = "NO_UPLOAD" if "no manifest" in str(e) else "BAD_UPLOAD"
-                    self._publish_agent(sid, rec)
-                    self._reject(sid, code, str(e), "FAILED")
-                    continue
-                edit = Path(self.d.work_dir) / sid / "upload" / "edit"
+            deadline = self.db.run(sid)["task"]["run"]["deadline"]
+            try:
+                staging.collect(self.d.private, sid, deadline, Path(self.d.work_dir) / sid / "upload",
+                                self.d.comp_rules["upload"])
+            except staging.UploadError as e:
+                code = "NO_UPLOAD" if "no manifest" in str(e) else "BAD_UPLOAD"
+                self._publish_agent(sid, rec)
+                self._reject(sid, code, str(e), "FAILED")
+                continue
+            edit = Path(self.d.work_dir) / sid / "upload" / "edit"
             parent_problem = self._check_parent_ref(edit, rec.get("parent"))
             if parent_problem:
                 publisher.publish_dir(self.d.public, layout.submission_edit_prefix(sid), edit)
@@ -576,9 +554,6 @@ class Orchestrator:
                 adm = self.d.executor.admit(sid, build_dir, registry.load_base(rec["base"], self.d.registry_root))
             except Exception as e:
                 self._failed(s, "admission", e)
-                continue
-            if not adm["passed"] and rec.get("initial"):   # our own pinned edit: a registry error, never a rejection
-                self._backoff(s, f"the initial champion fails admission: {adm['violations']}")
                 continue
             publisher.publish_dir(self.d.public, layout.submission_edit_prefix(sid), edit)
             publisher.publish_admission(self.d.public, sid, {k: adm.get(k) for k in
@@ -645,7 +620,7 @@ class Orchestrator:
     def _failed(self, s, what, e):
         """A step failed: counted against the submission only when its own job failed (JobFailed) and it is a miner's
         submission; anything else is ours (backoff)."""
-        if isinstance(e, JobFailed) and not s["record"].get("initial"):
+        if isinstance(e, JobFailed):
             return self._job_failed(s, f"{what}: {e}")
         return self._backoff(s, f"{what}: {e}")
 
@@ -659,9 +634,9 @@ class Orchestrator:
 
     # ------------------------------------------------------------------------------------------- evaluate
     def evaluate(self):
-        """One model per call, on all evaluation GPUs: the season's base first (once, only in a season without an
-        initial champion: the reference until the first champion), then the ADMITTED candidates in
-        priority order. A failure of the base's job or of our side backs off (never counted); a failing job of the
+        """One model per call, on all evaluation GPUs: the base model first (once: the reference until a first
+        champion; its results are published under models/<base>/base/), then the ADMITTED candidates in priority
+        order. A failure of the base's job or of our side backs off (never counted); a failing job of the
         candidate's own model is counted. Partial output is kept on the host and resumed by the next call."""
         from ..benchmarks import parse  # noqa: PLC0415
         subs = [s for s in sorted(self.db.subs(status=("ADMITTED",)), key=self.priority) if self._due(s)]
@@ -671,10 +646,7 @@ class Orchestrator:
             rules = self.rules_for(s["sid"])
             base_doc = registry.load_base(rules["base"], self.d.registry_root)
             ran = False
-            # only what a match needs: the base is the reference only in a season without an initial champion;
-            # every champion was evaluated as an entry
-            refs = [] if rules.doc.get("initial_champion") else [f"base:{rules['base']}"]
-            for model_id in (*refs, s["sid"]):
+            for model_id in (f"base:{rules['base']}", s["sid"]):    # every champion was evaluated as an entry
                 have = self.db.results(model_id)
                 missing = [registry.load_benchmark(k, self.d.registry_root).doc
                            for k in rules.benchmark_keys() if k not in have]
@@ -684,20 +656,35 @@ class Orchestrator:
                     return                             # one model per call: collect gets its turn in between
                 ran = True
                 try:
-                    outs = self.d.executor.evaluate(model_id, base_doc, missing, f"axonry-{rules.season}")
+                    outs = self.d.executor.evaluate(model_id, base_doc, missing, f"axonry-{rules['base']}")
                 except Exception as e:
                     if model_id.startswith("base:"):   # the base model's own job: always ours
                         return self._backoff(s, f"base evaluation: {e}")
                     return self._failed(s, "evaluation", e)
                 for key, out in outs.items():
                     self.db.put_results(model_id, key, parse(out))
-                    if not model_id.startswith("base:"):
-                        publisher.publish_results(self.d.public, model_id, key, out)
+                    publisher.publish_results(self.d.public, model_id, key, out)
+                if model_id.startswith("base:"):
+                    self._publish_base_score(model_id, rules)
             self._recovered(s)
             self.db.update(s["sid"], "SCORED", record_patch={
                 "timeline": {**s["record"]["timeline"], "scored": self.now()}})
             if ran:
                 return
+
+    def _publish_base_score(self, model_id, rules):
+        """The base model's score.json, as an entry's but with no match: its accuracy per benchmark (write-once; a
+        later rules version adding benchmarks only adds results files, line.json carries the rest)."""
+        res = self.db.results(model_id)
+        if not set(rules.benchmark_keys()) <= set(res):
+            return
+        try:
+            publisher.publish_score(self.d.public, model_id, {
+                "base": rules["base"], "rules_sha256": rules.sha256,
+                "benchmarks": {k: {"acc": round(judge.accuracy(res[k]), 4), "n": len(res[k])}
+                               for k in rules.benchmark_keys()}})
+        except ImmutableObjectError:
+            log.info("%s: score.json already published under earlier rules", model_id)
 
     # ------------------------------------------------------------------------------------------- decide
     def decide(self):
@@ -707,26 +694,24 @@ class Orchestrator:
         later commitment - e.g. a copy - can never be judged before the content it may have copied. WAITING ones (no
         PR, no funds yet) do not block: nobody can be held up by a miner who does not show up."""
         waiting = ("REVIEW", "QUEUED", "RUNNING", "COLLECTING", "ADMITTED")
-        blocked = set()                       # seasons are decided independently
+        blocked = set()                       # each base's line is decided independently
         for s in sorted(self.db.subs(), key=self.priority):
-            if s["season"] in blocked:
+            if s["base"] in blocked:
                 continue
             if s["status"] in waiting:
-                blocked.add(s["season"])
+                blocked.add(s["base"])
             elif s["status"] == "SCORED":
                 self._decide_one(s)
 
     def _decide_one(self, s):
-        """One match: the submission against the champion of this moment only (the base while the season has no
-        champion yet). The season's initial champion plays none."""
-        sid, rec, season = s["sid"], s["record"], s["season"]
+        """One match: the submission against the champion of this moment only (the base model while its line has no
+        champion yet)."""
+        sid, rec, base = s["sid"], s["record"], s["base"]
         rules = self.rules_for(sid)
         params = {k: rules.judge_params(k) for k in rules.benchmark_keys()}
         head = self.d.chain.finalized_head()
-        if rec.get("initial"):
-            return self._crown_initial(s, rules, params, head)
-        champ = self.db.champion(season)
-        ref_id = champ["sid"] if champ else f"base:{rec['base']}"
+        champ = self.db.champion(base)
+        ref_id = champ["sid"] if champ else f"base:{base}"
         ref = self.db.results(ref_id)
         mine = self.db.results(sid)
         cmp = judge.compare(mine, ref, params, rules["judge"])
@@ -743,7 +728,7 @@ class Orchestrator:
                                                           + params[k]["delta_win"], 4)}}
         decision = "NEW_CHAMPION" if cmp["dominates"] else "NOT_DOMINATING"
         publisher.publish_score(self.d.public, sid, {
-            "season": season, "rules_sha256": rules.sha256, "model_digest": rec.get("model_digest"),
+            "base": base, "rules_sha256": rules.sha256, "model_digest": rec.get("model_digest"),
             "judge": rules["judge"], "benchmarks": benches, "wins": cmp["wins"], "tie_all": cmp["tie_all"],
             "dominates_champion": cmp["dominates"], "decision": decision, "decided_block": head})
         self.db.update(sid, "PUBLISHED", reason_code=decision, decided_at=self.d.clock(), record_patch={
@@ -754,28 +739,13 @@ class Orchestrator:
             "timeline": {**rec["timeline"], "decided": self.now()}})
         self._publish_record(sid)
         if cmp["dominates"]:
-            self.db.add_champion(season, sid, s["hotkey"], head, {"reference": ref_id, "wins": cmp["wins"]})
+            self.db.add_champion(base, sid, s["hotkey"], head, {"reference": ref_id, "wins": cmp["wins"]})
         self._close_pr(sid, f"axonry: submission `{sid}` -> **{decision}** ({cmp['wins']} wins, not worse on all: "
                             f"{cmp['tie_all']}). Details: `axonry-miner board {sid}`.",
                        (rec.get("pr") or {}).get("locked_commit") if cmp["dominates"] else None)
-        self._publish_season(season)
+        self._publish_line(base)
         if cmp["dominates"]:
             self.publish_weights()
-
-    def _crown_initial(self, s, rules, params, head):
-        """The initial champion takes the title without a match; its scores are published as they are."""
-        sid, rec = s["sid"], s["record"]
-        mine = self.db.results(sid)
-        publisher.publish_score(self.d.public, sid, {
-            "season": s["season"], "rules_sha256": rules.sha256, "model_digest": rec.get("model_digest"),
-            "benchmarks": {k: {"acc": round(judge.accuracy(mine[k]), 4), "n": len(mine[k])} for k in params},
-            "decision": "INITIAL_CHAMPION", "decided_block": head})
-        self.db.update(sid, "PUBLISHED", reason_code="INITIAL_CHAMPION", decided_at=self.d.clock(), record_patch={
-            "decision": "INITIAL_CHAMPION", "timeline": {**rec["timeline"], "decided": self.now()}})
-        self._publish_record(sid)
-        self.db.add_champion(s["season"], sid, None, head, {"initial": rec["initial"]})
-        self._publish_season(s["season"])
-        self.publish_weights()
 
     def disqualify(self, sid, reason):
         """The owner's public ruling on a run that broke the rules the checks cannot see (e.g. its published agent log
@@ -784,11 +754,11 @@ class Orchestrator:
         s = self.db.sub(sid)
         if s is None or s["status"] not in ("SCORED", "PUBLISHED"):
             raise ValueError(f"{sid}: only an evaluated submission can be disqualified")
-        was_champion = (self.db.champion(s["season"]) or {}).get("sid") == sid
+        was_champion = (self.db.champion(s["base"]) or {}).get("sid") == sid
         self.db.update(sid, "DISQUALIFIED", reason_code="DISQUALIFIED", reason=reason[:2000])
         publisher.publish_ruling(self.d.public, sid, {"decision": "DISQUALIFIED", "reason": reason[:2000],
                                                       "at": self.now(), "was_champion": was_champion})
-        self._publish_season(s["season"])
+        self._publish_line(s["base"])
         if was_champion:
             self.publish_weights()
 
@@ -798,39 +768,42 @@ class Orchestrator:
         rec = {**s["record"], "status": s["status"], "reason_code": s["reason_code"], "reason": s["reason"]}
         publisher.publish_submission(self.d.public, sid, rec)
 
-    def _publish_season(self, season):
+    def _publish_line(self, base):
+        """models/<base>/line.json: the base model's line in one file - champion and succession, the base model's own
+        accuracy (the first reference), the Pareto front, and one row per entry (status, decision, reference and per
+        benchmark [accuracy, not-worse-at, win-at, verdict]). Every figure in it also lives in write-once files."""
         rows, models = [], {}
-        champ = self.db.champion(season)
-        for s in self.db.subs(season=season):
+        champ = self.db.champion(base)
+        for s in self.db.subs(base=base):
             r = s["record"]
             rows.append({"sid": s["sid"], "hotkey": s["hotkey"], "status": s["status"], "reason_code": s["reason_code"],
-                         "base": r.get("base"), "wins": r.get("wins"), "decision": r.get("decision"),
+                         "rules": r.get("rules_sha256"), "wins": r.get("wins"), "decision": r.get("decision"),
                          "reference": r.get("reference"), "scores": r.get("scores"),
-                         "pr": (r.get("pr") or {}).get("number"), "title": (r.get("pr") or {}).get("title"), "decided_at": s["decided_at"]})
+                         "pr": (r.get("pr") or {}).get("number"), "title": (r.get("pr") or {}).get("title"),
+                         "decided_at": s["decided_at"]})
             if s["status"] == "PUBLISHED":
                 models[s["sid"]] = self.db.results(s["sid"])
-        front = []
+        base_id, front, accuracy = f"base:{base}", [], {}
         try:
-            rules = registry.load_rules_versions(season, self.d.registry_root)[-1]
+            rules = registry.load_rules_versions(base, self.d.registry_root)[-1]
             params = {k: rules.judge_params(k) for k in rules.benchmark_keys()}
-            base_id = f"base:{rules['base']}"
-            base = self.db.results(base_id)
-            pool = {**({base_id: base} if base else {}),
-                    **{k: v for k, v in models.items() if set(params) <= set(v)}}
-            if pool and all(set(params) <= set(v) for v in pool.values()):
+            pool = {m: v for m, v in {base_id: self.db.results(base_id), **models}.items() if set(params) <= set(v)}
+            if pool:
                 front = judge.pareto_front(pool, params, rules["judge"])
-            summary = {m: {k: round(judge.accuracy(pool[m][k]), 4) for k in params} for m in front}
+            accuracy = {m: {k: round(judge.accuracy(pool[m][k]), 4) for k in params} for m in pool}
         except (registry.RegistryError, judge.JudgeError):
-            summary = {}
-        leaderboard = {"champion": ({"sid": champ["sid"], "hotkey": champ["hotkey"], "since_block": champ["block"]}
-                                    if champ else None),
-                       "pareto_front": [{"id": m, "accuracy": summary.get(m)} for m in front]}
-        leaderboard["history"] = [{"seq": c["seq"], "sid": c["sid"], "hotkey": c["hotkey"], "block": c["block"],
-                                   "evidence": json.loads(c["evidence"])} for c in self.db.champions(season)]
-        publisher.publish_season(self.d.public, season, rows, leaderboard)
+            pass
+        publisher.publish_line(self.d.public, base, {
+            "champion": ({"sid": champ["sid"], "hotkey": champ["hotkey"], "since_block": champ["block"]}
+                         if champ else None),
+            "history": [{"seq": c["seq"], "sid": c["sid"], "hotkey": c["hotkey"], "block": c["block"],
+                         "evidence": json.loads(c["evidence"])} for c in self.db.champions(base)],
+            "base_model": {"id": base_id, "accuracy": accuracy.get(base_id)},
+            "pareto_front": [{"id": m, "accuracy": accuracy.get(m)} for m in front],
+            "entries": rows})
 
     def _in_force(self, head):
-        """The rules in force at `head` (a next season may be staged), or None before the first season opens."""
+        """The rules in force at `head` (a next version may be staged), or None before the first takes effect."""
         try:
             return registry.rules_at(head, self.d.registry_root)
         except registry.RegistryError:
@@ -841,31 +814,31 @@ class Orchestrator:
         rules = self._in_force(head)
         if rules is None:
             return
-        season = rules.season
-        champ = self.db.champion(season)
+        base = rules["base"]
+        champ = self.db.champion(base)
         info = None
-        if champ and champ["hotkey"]:          # the initial champion has none: its weight is burned (uid0)
+        if champ:
             uid = self.d.chain.uid_of(champ["hotkey"], rules["netuid"])
             info = {"sid": champ["sid"], "hotkey": champ["hotkey"], "uid": uid}
         published = json.loads(self.d.public.get(layout.WEIGHTS) or "{}").get("sequence", 0)
         seq = max(self.db.get("weights_sequence", 0), published) + 1     # a restored state DB may lag behind
-        doc = publisher.build_weights(rules["netuid"], season, info, seq, head, burn=self.d.burn)
+        doc = publisher.build_weights(rules["netuid"], base, info, seq, head, burn=self.d.burn)
         publisher.publish_weights(self.d.public, doc, self.d.owner_keypair)
         self.db.set("weights_sequence", seq)
-        publisher.publish_index(self.d.public, season, rules.sha256)
+        publisher.publish_index(self.d.public, rules, self.d.registry_root)
 
     def bootstrap(self):
-        """Publish definitions and the index of the rules in force, and an initial weights.json (uid0 = burn) if none
+        """Publish definitions and the index of the rules in force, and a first weights.json (uid0 = burn) if none
         exists yet."""
         publisher.publish_registry(self.d.public, self.d.registry_root)
         if self.d.public.get(layout.WEIGHTS) is None:
             self.publish_weights()
         elif rules := self._in_force(self.d.chain.finalized_head()):     # the rules in force, as now in the registry
-            publisher.publish_index(self.d.public, rules.season, rules.sha256)
+            publisher.publish_index(self.d.public, rules, self.d.registry_root)
 
     def refresh_weights(self, max_age=86400):
-        """Re-issue weights.json when it is old, a new season is in force, the owner's burned share changed, or the
-        champion's uid changed (re-registration)."""
+        """Re-issue weights.json when it is old, another base model's line is in force, the owner's burned share
+        changed, or the champion's uid changed (re-registration)."""
         raw = self.d.public.get(layout.WEIGHTS)
         if raw is None:
             return self.publish_weights()
@@ -873,9 +846,9 @@ class Orchestrator:
         champ = cur.get("champion")
         moved = bool(champ) and self.d.chain.uid_of(champ["hotkey"], cur["netuid"]) != champ.get("uid")
         rules = self._in_force(self.d.chain.finalized_head())
-        new_season = rules is not None and rules.season != cur.get("season")
+        new_base = rules is not None and rules["base"] != cur.get("base")
         burn = cur.get("burn", 0.0) != self.d.burn             # the owner changed the burned share
-        if moved or new_season or burn or self.d.clock() - cur.get("issued_at", 0) > max_age:
+        if moved or new_base or burn or self.d.clock() - cur.get("issued_at", 0) > max_age:
             self.publish_weights()
 
     def publish_status(self, every=60):
@@ -889,23 +862,19 @@ class Orchestrator:
             pr = s["record"].get("pr") or {}
             starting = s["status"] == "QUEUED" and self.d.fleet.get(s["sid"]) is not None   # its machine sets up
             return {"sid": s["sid"], "hotkey": s["hotkey"], "pr": s["pr_number"],
-                    "title": pr.get("title") or s["record"].get("about"),
+                    "title": pr.get("title"),
                     "status": "STARTING" if starting else s["status"],
                     "reason_code": None if starting else s["reason_code"], "reason": None if starting else s["reason"],
                     "commit": s["locked_commit"] or s["head_sha"], "content_digest": s["content_digest"],
                     "directory": pr.get("directory"),
                     "priority": [s["prio_block"], s["prio_index"]]}
         by_prio = sorted(self.db.subs(), key=self.priority)
-        running = []
-        for s in (x for x in by_prio if x["status"] == "RUNNING"):
-            run = self.db.run(s["sid"]) or {}
-            running.append({**row(s), "deadline": (run.get("task") or {}).get("run", {}).get("deadline")})
         rules = self._in_force(self.d.chain.finalized_head())
         if rules is None:
             return
-        champ = self.db.champion(rules.season)
+        champ = self.db.champion(rules["base"])
         accounts = self.db.accounts()
-        doc = {"schema": publisher.SCHEMAS["status"], "updated_at": self.now(), "season": rules.season,
+        doc = {"schema": publisher.SCHEMAS["status"], "updated_at": self.now(), "base": rules["base"],
                "repo": getattr(self.d.github, "repo", None),
                "champion": self._champion_row(champ),
                "miners": self._miners(rules["netuid"], accounts),
@@ -914,7 +883,7 @@ class Orchestrator:
                          for i, s in enumerate(x for x in by_prio if x["status"] == "QUEUED")],
                "waiting": [row(s) for s in by_prio if s["status"] == "WAITING"],
                "stopped": [row(s) for s in by_prio if s["status"] in ("REJECTED", "FAILED") and not s["locked_commit"]],
-               "running": running,
+               "running": [row(s) for s in by_prio if s["status"] == "RUNNING"],
                "evaluating": [row(s) for s in by_prio if s["status"] in ("COLLECTING", "ADMITTED", "SCORED")],
                "prs": sorted(self.db.get("prs", {}).values(), key=lambda w: w["pr"]),
                "contents": self._contents(),
@@ -928,7 +897,7 @@ class Orchestrator:
         rec = (self.db.sub(champ["sid"]) or {}).get("record", {})
         pr = rec.get("pr") or {}
         return {"sid": champ["sid"], "hotkey": champ["hotkey"], "pr": pr.get("number"),
-                "title": pr.get("title") or rec.get("about"), "initial": rec.get("initial")}
+                "title": pr.get("title")}
 
     def _sample(self, sid) -> dict:
         """The run's machine now: GPU use and the agent's one-line status (secrets of the run removed)."""

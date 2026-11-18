@@ -19,7 +19,7 @@
   axonry-orchestrator registry pin-competition          competition commit + rules.json sha256 into the latest rules
   axonry-orchestrator publish-registry                  publish definitions to the public bucket
   axonry-orchestrator rehearse [--hours H --limit N --samples K --review-command CMD --fresh]
-                                                     dress rehearsal of a season: real orchestrator, reviewer, machines,
+                                                     dress rehearsal: real orchestrator, reviewer, machines,
                                                      arbos, R2, evaluation; simulated chain, GitHub and miners
 Configuration: config/axonry.toml (see config/example.toml); secrets from the environment.
 """
@@ -174,21 +174,21 @@ def check_published(cfg, rules, keypair):
     from axonry_validator.network import NETWORKS  # noqa: PLC0415
     net = NETWORKS.get(cfg.get("chain.network", "finney"), {})
     if net.get("netuid") is not None and net["netuid"] != rules["netuid"]:
-        raise SystemExit(f"season netuid {rules['netuid']} != published netuid {net['netuid']}")
+        raise SystemExit(f"rules netuid {rules['netuid']} != published netuid {net['netuid']}")
     if net.get("owner") is not None and net["owner"] != keypair.ss58_address:
         raise SystemExit(f"owner key {keypair.ss58_address} is not the published owner {net['owner']}")
     return keypair
 
 
 def competition_rules(repo: Path, rules) -> dict:
-    """The competition protocol the season pins. Refuses to run on a checkout that differs from the pin, so the
-    protocol applied is always the one the season publishes."""
+    """The competition protocol the rules pin. Refuses to run on a checkout that differs from the pin, so the
+    protocol applied is always the one the rules publish."""
     pin = rules["competition"]
     head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
     raw = (Path(repo) / "rules.json").read_bytes()
     if head != pin["commit"] or sha256_hex(raw) != pin["rules_sha256"]:
-        raise SystemExit(f"competition checkout {repo} is at {head[:12]} (rules {sha256_hex(raw)[:12]}), but season "
-                         f"{rules.season} pins {pin['commit'][:12]} (rules {pin['rules_sha256'][:12]}): "
+        raise SystemExit(f"competition checkout {repo} is at {head[:12]} (rules {sha256_hex(raw)[:12]}), but the rules "
+                         f"pin {pin['commit'][:12]} (rules {pin['rules_sha256'][:12]}): "
                          "git submodule update, or pin a new version (registry pin-competition)")
     return json.loads(raw)
 
@@ -197,7 +197,7 @@ def cmd_run(cfg, a):
     orch = build(cfg)
     if a.role in ("main", "all") and orch.db.get("cursor") is None:
         try:
-            orch.intake()         # the first season's effective_block: nothing earlier is read
+            orch.intake()         # the first rules' effective_block: nothing earlier is read
         except ValueError as e:
             raise SystemExit(str(e))
     if a.role in ("main", "all"):
@@ -233,7 +233,7 @@ def cmd_calibrate(cfg, a):
     root = registry.ROOT
     if a.limit or a.samples:   # a scaled copy of the registry, never committed
         root = overridden_registry(Path(".state/calibrate/registry"), limit=a.limit, samples=a.samples)
-        rules = registry.load_rules_versions(rules.season, root)[-1]
+        rules = registry.load_rules_versions(rules["base"], root)[-1]
     from ..pool.machine import EVAL  # noqa: PLC0415
     from .db import DB  # noqa: PLC0415
     fl = fleet(cfg, DB(cfg.path_of("state.db")), rules)
@@ -284,13 +284,12 @@ def pin_bench(key, comp_repo, root=registry.ROOT):
 
 
 def pin_competition(comp_repo, root=registry.ROOT):
-    """Record the competition repo commit and rules.json sha256 in the season's latest rules version (edit it only
-    before it takes effect; afterwards add a new version instead)."""
+    """Record the competition repo commit and rules.json sha256 in the latest rules version (edit it only before it
+    takes effect; afterwards add a new version instead)."""
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=comp_repo, capture_output=True, text=True,
                             check=True).stdout.strip()
     rules_sha = sha256_hex(Path(comp_repo, "rules.json").read_bytes())
-    season = registry.seasons(root)[-1]
-    path = sorted((Path(root) / "seasons" / season).glob("*.json"))[-1]
+    path = sorted((Path(root) / "rules" / registry.latest_rules(root)["base"]).glob("*.json"))[-1]
     doc = read_json(path)
     doc["competition"] = {**doc["competition"], "commit": commit, "rules_sha256": rules_sha}
     write_json(path, doc)
@@ -306,12 +305,12 @@ def main(argv=None):
     r.add_argument("--once", action="store_true")
     sub.add_parser("status")
     sub.add_parser("refresh-agents")
-    ca = sub.add_parser("calibrate", help="A/A noise of every benchmark on the evaluation GPUs (the initial champion, or the base, against itself)")
+    ca = sub.add_parser("calibrate", help="A/A noise of every benchmark on the evaluation GPUs (the base model against itself)")
     ca.add_argument("--limit", type=int, help="items per benchmark (default: the definitions')")
     ca.add_argument("--samples", type=int, help="samples per item (default: the definitions')")
     rs = sub.add_parser("restore-state", help="replace the local state DB by a snapshot (default: the latest)")
     rs.add_argument("--key")
-    t = sub.add_parser("rehearse", help="dress rehearsal of a season on real infrastructure (owner tooling)")
+    t = sub.add_parser("rehearse", help="dress rehearsal on real infrastructure (owner tooling)")
     t.add_argument("--hours", type=float, default=1.5, help="agent run length")
     t.add_argument("--limit", type=int, default=40, help="items per benchmark")
     t.add_argument("--samples", type=int, default=1)

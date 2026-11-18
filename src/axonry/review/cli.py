@@ -1,4 +1,4 @@
-"""axonry-review: the reviewer (review/PROTOCOL.md). Token: AXONRY_REVIEW_TOKEN, an account listed in the season's
+"""axonry-review: the reviewer (review/PROTOCOL.md). Token: AXONRY_REVIEW_TOKEN, an account listed in the rules'
 review.reviewers; nothing else.
 
   axonry-review run [--workdir D] [--command CMD]  the automatic reviewer: the queue top-down, POLICY.md answered by

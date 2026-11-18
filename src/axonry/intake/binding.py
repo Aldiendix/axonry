@@ -41,7 +41,7 @@ def carrier_problem(s, p) -> str | None:
 
 def check_entry(entry_bytes: bytes | None, rules, comp_rules: dict) -> Rejected | dict:
     """entry.json against the competition protocol (schema id: submission.entry_schema when the protocol names one)
-    and the season's rules (its one base)."""
+    and the rules (their one base)."""
     if entry_bytes is None:
         return Rejected(BAD_ENTRY, "entry.json missing")
     try:
@@ -52,7 +52,7 @@ def check_entry(entry_bytes: bytes | None, rules, comp_rules: dict) -> Rejected 
     if not isinstance(entry, dict) or not isinstance(entry.get("base"), str) or (want and entry.get("schema") != want):
         return Rejected(BAD_ENTRY, f"entry.json needs base{f' and schema {want}' if want else ''}")
     if entry["base"] != rules["base"]:
-        return Rejected(BASE_NOT_ALLOWED, f"base {entry['base']} is not this season's base {rules['base']}")
+        return Rejected(BASE_NOT_ALLOWED, f"base {entry['base']} is not the base of the rules, {rules['base']}")
     parent = entry.get("parent")
     if parent is not None:
         from ..common.ids import SID_RE  # noqa: PLC0415

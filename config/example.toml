@@ -12,7 +12,7 @@ burn = 0.0                    # share of the weight burned (uid0) beside the cha
 
 [competition]
 github_token_env = "AXONRY_GITHUB_TOKEN"     # contents:write (lock tags axonry/<sid>, champion merge), pull_requests:write
-local_path = "WeightSpaceProgramming"     # git submodule; its commit is the competition version a season pins
+local_path = "WeightSpaceProgramming"     # git submodule; its commit is the competition version the rules pin
 
 [storage]
 backend = "r2"                # "local" for development: local_public / local_private directories
@@ -34,7 +34,7 @@ image = "vllm/vllm-openai@sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697c
 ssh_key = "~/.ssh/axonry_vast"  # the orchestrator's key: root on every machine (owned hosts: put the .pub in root's
                                 #   authorized_keys; vast.ai: added to the account itself)
 eval_gpus = 8                 # the evaluation machine's GPUs (an owned evaluation host must have exactly these)
-eval_gpu_name = "RTX 4090"    # every evaluation of a season on one GPU model: scores are compared across runs
+eval_gpu_name = "RTX 4090"    # every evaluation of a base on one GPU model: scores are compared across runs
 eval_idle_minutes = 20        # a vast.ai evaluation machine is released after this long without work
 # proxy_command = "nc -X 5 -x PROXY_HOST:PORT %h %p"   # only where this host reaches the internet through a proxy
 

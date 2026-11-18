@@ -105,7 +105,7 @@ def test_the_evaluation_host_keeps_its_container(tmp_path):
     clock, fake = [1000.0], FakeHost()
     p, db = pool(tmp_path, [{"name": "ev", "address": "203.0.113.6", "role": "eval"}], fake, clock)
     assert not p.rent(EVAL, "RTX 4090", 4)                                  # needs all 8 GPUs of the host
-    assert not p.rent(EVAL, "RTX 5090", 8)                                  # and the season's GPU model
+    assert not p.rent(EVAL, "RTX 5090", 8)                                  # and the rules' GPU model
     assert p.rent(EVAL, "RTX 4090", 8)
     assert p.advance(EVAL) == "booting"
     finish(fake, "init-")

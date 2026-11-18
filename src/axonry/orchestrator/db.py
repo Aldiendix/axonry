@@ -8,7 +8,7 @@ from pathlib import Path
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS submissions (
-  sid TEXT PRIMARY KEY, season TEXT, hotkey TEXT, coldkey TEXT, status TEXT NOT NULL, reason_code TEXT, reason TEXT,
+  sid TEXT PRIMARY KEY, base TEXT, hotkey TEXT, coldkey TEXT, status TEXT NOT NULL, reason_code TEXT, reason TEXT,
   content_digest TEXT, record TEXT NOT NULL, created_at REAL, updated_at REAL, decided_at REAL,
   infra_retries INTEGER DEFAULT 0,
   pr_number INTEGER, head_sha TEXT, prio_block INTEGER, prio_index INTEGER,
@@ -25,9 +25,16 @@ CREATE TABLE IF NOT EXISTS machines (provider_id TEXT PRIMARY KEY, name TEXT, ma
   ended_at REAL, note TEXT);
 CREATE TABLE IF NOT EXISTS runs (sid TEXT PRIMARY KEY, task TEXT, handle TEXT, sup_state TEXT);
 CREATE TABLE IF NOT EXISTS results (model_id TEXT, bench_key TEXT, scores TEXT, PRIMARY KEY (model_id, bench_key));
-CREATE TABLE IF NOT EXISTS champions (season TEXT, seq INTEGER, sid TEXT, hotkey TEXT, block INTEGER, at REAL,
-  evidence TEXT, PRIMARY KEY (season, seq));
+CREATE TABLE IF NOT EXISTS champions (base TEXT, seq INTEGER, sid TEXT, hotkey TEXT, block INTEGER, at REAL,
+  evidence TEXT, PRIMARY KEY (base, seq));
 """
+
+# One-time move from season-labelled state (2026-11-18): the only season, s1, was the line of this base, and its rules
+# lost the season field (new sha). Remove once no state of that time exists.
+_SEASONS = {"s1": "qwen35-0.8b-think"}
+_RULES = {"9236661f70663b6e1904d19ca1e61212fc4d468452d6fb34685a8962de014771":
+          "718c76f03cfcb278b0a52ba3971f8d5bb567bc04056c071785390cf008fc0ee9"}
+
 
 class DB:
     def __init__(self, path):
@@ -35,7 +42,23 @@ class DB:
         self.c = sqlite3.connect(str(path), isolation_level=None, timeout=60)
         self.c.row_factory = sqlite3.Row
         self.c.execute("PRAGMA journal_mode=WAL")      # main loop and eval worker are separate processes
+        self._from_seasons()
         self.c.executescript(SCHEMA)
+
+    def _from_seasons(self):
+        if "season" not in {r["name"] for r in self.c.execute("PRAGMA table_info(submissions)")}:
+            return
+        self.c.execute("BEGIN IMMEDIATE")
+        for table in ("submissions", "champions"):
+            self.c.execute(f"ALTER TABLE {table} RENAME COLUMN season TO base")
+            for old, base in _SEASONS.items():
+                self.c.execute(f"UPDATE {table} SET base=? WHERE base=?", (base, old))
+        for r in self.c.execute("SELECT sid, record FROM submissions").fetchall():
+            rec = json.loads(r["record"])
+            rec.pop("season", None)
+            rec["rules_sha256"] = _RULES.get(rec.get("rules_sha256"), rec.get("rules_sha256"))
+            self.c.execute("UPDATE submissions SET record=? WHERE sid=?", (json.dumps(rec), r["sid"]))
+        self.c.execute("COMMIT")
 
     def snapshot(self) -> bytes:
         """A consistent copy of the whole database (the WAL included), taken while it is in use."""
@@ -53,12 +76,12 @@ class DB:
         self.c.execute("INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", (k, json.dumps(v)))
 
     # ---- submissions
-    def add_submission(self, sid, season, hotkey, coldkey, status, record, content_digest, prio):
+    def add_submission(self, sid, base, hotkey, coldkey, status, record, content_digest, prio):
         """A hotkey's one submission (unique per hotkey: one registration, one entry)."""
         now = time.time()
-        self.c.execute("INSERT OR IGNORE INTO submissions(sid,season,hotkey,coldkey,status,content_digest,record,"
+        self.c.execute("INSERT OR IGNORE INTO submissions(sid,base,hotkey,coldkey,status,content_digest,record,"
                        "created_at,updated_at,prio_block,prio_index) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                       (sid, season, hotkey, coldkey, status, content_digest, json.dumps(record), now, now, *prio))
+                       (sid, base, hotkey, coldkey, status, content_digest, json.dumps(record), now, now, *prio))
 
     def of_hotkey(self, hotkey):
         r = self.c.execute("SELECT * FROM submissions WHERE hotkey=? ORDER BY prio_block DESC, prio_index DESC",
@@ -81,14 +104,14 @@ class DB:
         d["record"] = json.loads(d["record"])
         return d
 
-    def subs(self, status=None, season=None):
+    def subs(self, status=None, base=None):
         q, args = "SELECT * FROM submissions WHERE 1=1", []
         if status:
             q += f" AND status IN ({','.join('?' * len(status))})"
             args += list(status)
-        if season:
-            q += " AND season=?"
-            args.append(season)
+        if base:
+            q += " AND base=?"
+            args.append(base)
         return [self._row(r) for r in self.c.execute(q + " ORDER BY sid", args)]
 
     def update(self, sid, status=None, record_patch=None, **cols):
@@ -196,18 +219,18 @@ class DB:
                 for r in self.c.execute("SELECT * FROM results WHERE model_id=?", (model_id,))}
 
     # ---- champions
-    def champion(self, season):
-        """The latest champion of the season that has not been disqualified (None: the base)."""
-        r = self.c.execute("SELECT c.* FROM champions c LEFT JOIN submissions s ON s.sid = c.sid WHERE c.season=? "
+    def champion(self, base):
+        """The latest champion of the base's line that has not been disqualified (None: the base model itself)."""
+        r = self.c.execute("SELECT c.* FROM champions c LEFT JOIN submissions s ON s.sid = c.sid WHERE c.base=? "
                            "AND COALESCE(s.status, '') != 'DISQUALIFIED' ORDER BY c.seq DESC LIMIT 1",
-                           (season,)).fetchone()
+                           (base,)).fetchone()
         return dict(r) if r else None
 
-    def add_champion(self, season, sid, hotkey, block, evidence):
-        seq = self.c.execute("SELECT COALESCE(MAX(seq), 0) + 1 FROM champions WHERE season=?", (season,)).fetchone()[0]
+    def add_champion(self, base, sid, hotkey, block, evidence):
+        seq = self.c.execute("SELECT COALESCE(MAX(seq), 0) + 1 FROM champions WHERE base=?", (base,)).fetchone()[0]
         self.c.execute("INSERT INTO champions VALUES(?,?,?,?,?,?,?)",
-                       (season, seq, sid, hotkey, block, time.time(), json.dumps(evidence)))
+                       (base, seq, sid, hotkey, block, time.time(), json.dumps(evidence)))
 
-    def champions(self, season=None):
-        q = "SELECT * FROM champions" + (" WHERE season=?" if season else "") + " ORDER BY season, seq"
-        return [dict(r) for r in self.c.execute(q, (season,) if season else ())]
+    def champions(self, base=None):
+        q = "SELECT * FROM champions" + (" WHERE base=?" if base else "") + " ORDER BY base, seq"
+        return [dict(r) for r in self.c.execute(q, (base,) if base else ())]

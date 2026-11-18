@@ -1,4 +1,4 @@
-"""The season's benchmark items for evaluation hosts that cannot load them from Hugging Face as it serves them. Loaded
+"""The rules' benchmark items for evaluation hosts that cannot load them from Hugging Face as it serves them. Loaded
 through a mirror, `datasets` types some columns differently (it cannot read the Hub's metadata there), which makes
 other items: IFEval's no longer match its frozen manifest. So the orchestrator, which reaches Hugging Face, loads them
 with the competition toolkit, checks them against the frozen manifests, and packs them as the toolkit caches them

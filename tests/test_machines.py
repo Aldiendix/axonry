@@ -67,90 +67,90 @@ def fleet(tmp_path, clock):
 def test_a_machine_is_rented_set_up_and_released(tmp_path):
     clock = [1000.0]
     f, api, remote = fleet(tmp_path, clock)
-    f.rent("s1", "RTX 4090", 8)
+    f.rent("qwen35-0.8b-think", "RTX 4090", 8)
     assert api.created == [11] and api.keys == ["ssh-ed25519 AAAA orchestrator"]       # cheapest offer
-    assert f.advance("s1") == "booting"                                                 # instance still loading
+    assert f.advance("qwen35-0.8b-think") == "booting"                                                 # instance still loading
     api.status["i1"] = {"actual_status": "running", "public_ipaddr": "198.51.100.4 ",
                         "ports": {"22/tcp": [{"HostPort": "40022"}]}}
     remote.drop = 1                                   # a dropped connection: retried, not a failure
-    assert f.advance("s1") == "booting" and api.destroyed == []
-    assert f.advance("s1") == "setting_up"
+    assert f.advance("qwen35-0.8b-think") == "booting" and api.destroyed == []
+    assert f.advance("qwen35-0.8b-think") == "setting_up"
     assert any("setup.sh 8" in c for c in remote.commands) and "scp /root/axonry-setup.tgz" in remote.commands
-    assert f.advance("s1") == "setting_up"
+    assert f.advance("qwen35-0.8b-think") == "setting_up"
     remote.ready = True
-    assert f.advance("s1") == "ready"
-    m = f.machine(f.get("s1"))
+    assert f.advance("qwen35-0.8b-think") == "ready"
+    m = f.machine(f.get("qwen35-0.8b-think"))
     assert (m.ip, m.port, m.user) == ("198.51.100.4", 40022, "root")
-    f.release("s1")
-    assert api.destroyed == ["i1"] and f.get("s1") is None and f.active() == []
+    f.release("qwen35-0.8b-think")
+    assert api.destroyed == ["i1"] and f.get("qwen35-0.8b-think") is None and f.active() == []
 
 
 def test_a_machine_that_fails_setup_is_destroyed_and_never_rented_again(tmp_path):
     clock = [1000.0]
     f, api, remote = fleet(tmp_path, clock)
-    f.rent("s1", "RTX 4090", 8)
+    f.rent("qwen35-0.8b-think", "RTX 4090", 8)
     api.status["i1"] = {"actual_status": "running", "public_ipaddr": "198.51.100.4",
                         "ports": {"22/tcp": [{"HostPort": "40022"}]}}
-    f.advance("s1")
+    f.advance("qwen35-0.8b-think")
     remote.failed = True
-    assert f.advance("s1") == "failed" and api.destroyed == ["i1"] and f.get("s1") is None
-    f.rent("s1", "RTX 4090", 8)                       # vast machine 1 failed: the next offer
+    assert f.advance("qwen35-0.8b-think") == "failed" and api.destroyed == ["i1"] and f.get("qwen35-0.8b-think") is None
+    f.rent("qwen35-0.8b-think", "RTX 4090", 8)                       # vast machine 1 failed: the next offer
     assert api.created == [11, 12]
     clock[0] += 46 * 60                               # and one that never gets ready in time is dropped too
-    assert f.advance("s1") == "failed" and api.destroyed == ["i1", "i2"]
+    assert f.advance("qwen35-0.8b-think") == "failed" and api.destroyed == ["i1", "i2"]
 
 
 def test_a_machine_whose_container_cannot_start_is_dropped_at_once(tmp_path):
     f, api, _ = fleet(tmp_path, [1000.0])
-    f.rent("s1", "RTX 4090", 8)
-    assert f.advance("s1") == "booting"               # still loading
+    f.rent("qwen35-0.8b-think", "RTX 4090", 8)
+    assert f.advance("qwen35-0.8b-think") == "booting"               # still loading
     api.status["i1"] = {"actual_status": "created", "status_msg": "Error response from daemon: failed to inject CDI devices"}
-    assert f.advance("s1") == "failed" and api.destroyed == ["i1"]
+    assert f.advance("qwen35-0.8b-think") == "failed" and api.destroyed == ["i1"]
 
 
 def test_a_host_whose_direct_port_is_unreachable_is_used_through_the_vast_relay(tmp_path):
     clock = [1000.0]
     f, api, remote = fleet(tmp_path, clock)
-    f.rent("s1", "RTX 4090", 8)
+    f.rent("qwen35-0.8b-think", "RTX 4090", 8)
     api.status["i1"] = {"actual_status": "running", "public_ipaddr": "198.51.100.4", "ssh_host": "ssh9.vast.ai",
                         "ssh_port": 16808, "ports": {"22/tcp": [{"HostPort": "40022"}]}}
     remote.unreachable.add(("198.51.100.4", 40022))
-    assert f.advance("s1") == "setting_up"
-    m = f.machine(f.get("s1"))
+    assert f.advance("qwen35-0.8b-think") == "setting_up"
+    m = f.machine(f.get("qwen35-0.8b-think"))
     assert (m.ip, m.port) == ("ssh9.vast.ai", 16808)
 
 
 def test_a_host_that_never_installs_our_key_is_given_up(tmp_path):
     clock = [1000.0]
     f, api, remote = fleet(tmp_path, clock)
-    f.rent("s1", "RTX 4090", 8)
+    f.rent("qwen35-0.8b-think", "RTX 4090", 8)
     api.status["i1"] = {"actual_status": "running", "public_ipaddr": "198.51.100.4",
                         "ports": {"22/tcp": [{"HostPort": "40022"}]}}
     f.ssh = lambda *a, **k: (_ for _ in ()).throw(VastError("root@x: Permission denied (publickey)."))
-    assert f.advance("s1") == "booting"                # at first: sshd may not have the key yet
+    assert f.advance("qwen35-0.8b-think") == "booting"                # at first: sshd may not have the key yet
     clock[0] += 16 * 60
-    assert f.advance("s1") == "failed" and api.destroyed == ["i1"]
+    assert f.advance("qwen35-0.8b-think") == "failed" and api.destroyed == ["i1"]
 
 
 def test_a_vanished_machine_is_noticed(tmp_path):
     clock = [1000.0]
     f, api, remote = fleet(tmp_path, clock)
-    f.rent("s1", "RTX 4090", 8)
+    f.rent("qwen35-0.8b-think", "RTX 4090", 8)
     api.status["i1"] = {"actual_status": "running", "public_ipaddr": "198.51.100.4",
                         "ports": {"22/tcp": [{"HostPort": "40022"}]}}
     remote.ready = True
-    f.advance("s1")
-    f.advance("s1")
-    assert not f.vanished("s1")
+    f.advance("qwen35-0.8b-think")
+    f.advance("qwen35-0.8b-think")
+    assert not f.vanished("qwen35-0.8b-think")
     api.status["i1"] = {"actual_status": "exited"}
-    assert f.vanished("s1")
+    assert f.vanished("qwen35-0.8b-think")
 
 
 def test_an_offer_taken_meanwhile_is_skipped(tmp_path):
     f, api, _ = fleet(tmp_path, [0.0])
     api.taken = 11                                    # rented by someone else between the search and the order
-    f.rent("s1", "RTX 4090", 8)
-    assert api.created == [12] and f.get("s1")["usd_hour"] == 3.5
+    f.rent("qwen35-0.8b-think", "RTX 4090", 8)
+    assert api.created == [12] and f.get("qwen35-0.8b-think")["usd_hour"] == 3.5
     api.taken_msg = "GPU conflict: requesting already rented gpus {241322}"   # an offer still listed, its GPUs gone
     f.rent("s2", "RTX 4090", 8)
     assert api.created == [12, 12]
@@ -160,7 +160,7 @@ def test_no_offer_is_an_error(tmp_path):
     f, api, _ = fleet(tmp_path, [0.0])
     api.offers = lambda *a: []
     with pytest.raises(VastError):
-        f.rent("s1", "RTX 4090", 8)
+        f.rent("qwen35-0.8b-think", "RTX 4090", 8)
 
 
 def test_runs_go_to_the_arbos_account_with_the_most_room():
@@ -188,12 +188,37 @@ def test_runs_go_to_the_arbos_account_with_the_most_room():
 
 
 def test_a_champion_after_a_disqualified_one_gets_the_next_number(tmp_path):
+    base = "qwen35-0.8b-think"
     db = DB(tmp_path / "db.sqlite")
-    db.add_submission("0000000001-0001", "s1", "hk1", "ck", "PUBLISHED", {}, "d1", (1, 1))
-    db.add_champion("s1", "0000000001-0001", "hk1", 1, {})
+    db.add_submission("0000000001-0001", base, "hk1", "ck", "PUBLISHED", {}, "d1", (1, 1))
+    db.add_champion(base, "0000000001-0001", "hk1", 1, {})
     db.update("0000000001-0001", "DISQUALIFIED")
-    db.add_champion("s1", "0000000002-0001", "hk2", 2, {})          # used to collide with the disqualified one
-    assert [c["seq"] for c in db.champions("s1")] == [1, 2] and db.champion("s1")["sid"] == "0000000002-0001"
+    db.add_champion(base, "0000000002-0001", "hk2", 2, {})          # used to collide with the disqualified one
+    assert [c["seq"] for c in db.champions(base)] == [1, 2] and db.champion(base)["sid"] == "0000000002-0001"
+
+
+def test_state_from_the_season_era_moves_to_base_lines(tmp_path):
+    """The live state of 2026-11-18 (season s1, rules before their season field went) opens as the base's line."""
+    import sqlite3
+    from axonry import registry
+    old = sqlite3.connect(tmp_path / "db.sqlite")
+    old.executescript(
+        "CREATE TABLE submissions (sid TEXT PRIMARY KEY, season TEXT, hotkey TEXT, coldkey TEXT, status TEXT NOT NULL,"
+        " reason_code TEXT, reason TEXT, content_digest TEXT, record TEXT NOT NULL, created_at REAL, updated_at REAL,"
+        " decided_at REAL, infra_retries INTEGER DEFAULT 0, pr_number INTEGER, head_sha TEXT, prio_block INTEGER,"
+        " prio_index INTEGER, locked_commit TEXT, run_cost INTEGER);"
+        "CREATE TABLE champions (season TEXT, seq INTEGER, sid TEXT, hotkey TEXT, block INTEGER, at REAL,"
+        " evidence TEXT, PRIMARY KEY (season, seq));")
+    rec = {"season": "s1", "rules_sha256": "9236661f70663b6e1904d19ca1e61212fc4d468452d6fb34685a8962de014771"}
+    old.execute("INSERT INTO submissions(sid, season, hotkey, status, record) VALUES ('0009531781-0011', 's1', 'hk',"
+                " 'RUNNING', ?)", (json.dumps(rec),))
+    old.commit()
+    old.close()
+    db = DB(tmp_path / "db.sqlite")
+    (s,) = db.subs(base="qwen35-0.8b-think")
+    assert s["record"] == {"rules_sha256": registry.latest_rules().sha256}
+    DB(tmp_path / "db.sqlite")                                             # opening again changes nothing
+    assert db.sub("0009531781-0011")["record"] == s["record"]
 
 
 def test_a_state_snapshot_holds_what_is_still_in_the_wal(tmp_path):

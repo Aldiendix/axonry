@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 from axonry.common.digest import content_digest_of_blobs
-from axonry.registry import Rules, load_rules_versions, seasons
+from axonry.registry import Rules, latest_rules
 from axonry.review import auto
 
 MINE = {"entry.json": b'{"base": "x"}', "METHOD.md": b"my method"}
@@ -54,7 +54,7 @@ def fake_model(tmp_path, verdict):
 
 
 def rules():
-    return load_rules_versions(seasons()[-1])[-1]
+    return latest_rules()
 
 
 def test_compares_with_earlier_content_of_other_hotkeys_only(tmp_path):

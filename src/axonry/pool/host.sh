@@ -4,7 +4,7 @@
 #   host.sh start STEP CMD ARGS...   run `host.sh CMD ARGS...` detached once: prints ok | running | failed (+ log tail)
 #   host.sh init IMAGE CHINA         Docker + the NVIDIA runtime, firewall, the jump user, sshd, the pinned image
 #   host.sh bake BUNDLE IMAGE CHINA  the run image axonry-run:<bundle sha>: IMAGE + setup.sh (all a run needs, offline)
-#   host.sh eval BUNDLE ITEMS IMAGE CHINA   the evaluation container (all GPUs), set up, with the season's benchmark
+#   host.sh eval BUNDLE ITEMS IMAGE CHINA   the evaluation container (all GPUs), set up, with the rules' benchmark
 #                                    items (evaluation/benchdata.py), checked
 #   host.sh run N GPUS TAG ROW       a fresh run container in slot N on GPUS (e.g. 0,1,2,3), sshd on 127.0.0.1:2300+N
 #   host.sh jump PORT PUBKEY         the jump user forwards this key to 127.0.0.1:PORT only (replaces the port's

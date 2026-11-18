@@ -60,10 +60,6 @@ class PublicReader:
                 return None
             raise
 
-    def current_season(self):
-        idx = self.get(layout.INDEX)
-        return idx["current_season"] if idx else None
-
     def rules(self):
         """The rules version in force (index.json names it)."""
         idx = self.get(layout.INDEX)
@@ -111,7 +107,7 @@ def _alpha_price(network, rules):
 
 
 def _prepare(a, r):
-    """-> (subtensor, wallet, hotkey, rules, commitment, digest) after checking the directory against the season."""
+    """-> (subtensor, wallet, hotkey, rules, commitment, digest) after checking the directory against the rules."""
     import bittensor as bt  # noqa: PLC0415
     from bittensor_wallet import Wallet  # noqa: PLC0415
 

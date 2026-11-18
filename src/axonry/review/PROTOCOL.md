@@ -80,6 +80,7 @@ From the lock on, pushes to the PR never affect the entry.
   before the earlier content it may have copied. `WAITING` submissions (no PR or no funds yet) do not hold the
   walk: a miner who does not show up cannot stall everyone.
 - A new champion's locked commit is merged into the main branch; every PR gets its result as a comment.
-- Until there is a champion, the base model is the reference and the weight goes to uid 0 (burned).
+- Each base model has its own line of champions (rules moving to a new base start a new line; earlier lines stay
+  published). Until a line has a champion, its base model is the reference and the weight goes to uid 0 (burned).
 - A run found afterwards to break the rules (e.g. its public agent log shows benchmark data or outside weights) is
   disqualified by the owner, publicly (`ruling.json`); a champion's title goes back to the previous one.
