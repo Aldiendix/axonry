@@ -19,21 +19,6 @@ Miners contribute the method; the subnet runs it, measures the result on benchma
 its weight to the best model. The champion, the queue, every run and every result are on
 [axonry.ai](https://axonry.ai).
 
-```mermaid
-flowchart LR
-    M["<b>Method</b><br/>miner's pull request"] --> R["<b>Review</b><br/>real, honest, original"]
-    R --> A["<b>Agent run</b><br/>own GPU machine"]
-    A --> E["<b>Edit</b><br/>declarative weight change"]
-    E --> V["<b>Evaluation</b><br/>paired with the champion"]
-    V -->|"better, never worse"| C(["<b>Champion</b><br/>all of the subnet's weight"])
-    C -. "next methods build on it" .-> M
-
-    classDef step fill:#f8fafc,stroke:#94a3b8,color:#0f172a
-    classDef win fill:#0f172a,stroke:#0f172a,color:#f8fafc
-    class M,R,A,E,V step
-    class C win
-```
-
 ## How it works
 
 1. A miner writes a **method**: instructions (and optional code) telling an AI agent how to find and fix a weakness
