@@ -321,6 +321,9 @@ def detail(reader, status, matches, key, color=None) -> str:
     return "\n".join(out).lstrip("\n")
 
 
+DASHBOARD = "https://axonry.ai/miner-dashboard/"
+
+
 def cmd_board(reader, n=20, color=None, watch=0, miner=None):
     """watch: redraw every that many seconds (the subnet publishes its status about once a minute); miner: one miner
     in full instead of the overview."""
@@ -334,6 +337,8 @@ def cmd_board(reader, n=20, color=None, watch=0, miner=None):
             text = detail(reader, status, matches, miner, color)
         else:
             text = board(status, matches, n, color)
+        if status and reader.base:
+            text += (f"\n\nMore detail: {DASHBOARD}\nData: {reader.base}/{layout.STATUS}")
         print(("\033[H\033[2J" if watch else "") + text, flush=True)
         if not watch:
             return
