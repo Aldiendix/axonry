@@ -22,7 +22,7 @@ its weight to the best model. The champion, the queue, every run and every resul
 ## How it works
 
 1. A miner writes a **method**: instructions (and optional code) telling an AI agent how to find and fix a weakness
-   of the season's base model. It is submitted as a pull request to the competition repository,
+   of the base model. It is submitted as a pull request to the competition repository,
    [WeightSpaceProgramming](https://github.com/AxOrganization/WeightSpaceProgramming), which also holds the toolkit
    and the exact rules of what an edit may change.
 2. Each registered hotkey enters **once**: the method is **committed** on chain before it is pushed, with
@@ -36,16 +36,14 @@ its weight to the best model. The champion, the queue, every run and every resul
    to build on). The verdict is posted on the pull request; once approved, the pull request is locked at that
    commit and the entry is queued. A finished entry gets its result on its pull request, which is then closed.
 4. When its turn comes, an AI agent carries out the method on its own GPU machine (set up for that run alone,
-   destroyed after it), until the season's deadline or until it says it is done. It delivers an **edit**: a small,
+   destroyed after it), until the deadline or until it says it is done. It delivers an **edit**: a small,
    declarative change to the base weights. Fitting the benchmarks and outside weights are forbidden; the agent's
    full log is published, and a run found to break these rules is disqualified publicly by the owner.
-5. The subnet checks the edit against the rules, builds the model and evaluates it on the season's benchmarks,
+5. The subnet checks the edit against the rules, builds the model and evaluates it on the benchmarks,
    paired with the current champion on the same questions and seeds.
 6. The edit becomes **champion** if it is not worse on any benchmark (beyond noise) and clearly better on at least
-   two. The champion receives all of the subnet's weight. Every edit, score and agent log is public.
-   A season may open with an **initial champion** (for example the model of the paper), shown first on the board:
-   it holds uid 0 (its weight is burned), and the first entries have to beat it. You may build on it, like on any
-   published entry: name its id as `parent` in entry.json.
+   two. Until there is a champion, the base model is the reference and the weight is burned (uid 0). The champion
+   receives all of the subnet's weight. Every edit, score and agent log is public.
 
 Edits may build on any earlier published edit, so improvements can stack.
 
@@ -56,17 +54,16 @@ entry**: a hotkey takes part once, with the content of its first commitment; to 
 Losing the registration after committing does not stop the entry; it only means no weight while deregistered (a
 deregistered champion's weight is burned until it registers again).
 
-**Fees.** You pay for your run's GPU time and its agent's model use. The season's rules publish the GPU model, the
+**Fees.** You pay for your run's GPU time and its agent's model use. The published rules give the GPU model, the
 number of GPUs, the maximum run time, the price per GPU-hour and the agent budget, so the most a run can cost is known
 in advance (`axonry-miner price`): every GPU hour up to the deadline plus the agent budget.
 
-- Fund the account of **the coldkey that owns the hotkey**: transfer alpha of this subnet (the assets a season
-  accepts are in its rules) from that coldkey to the subnet's treasury (`fee.treasury` in the rules), any amount, at
-  any time, as often as you like. Each transfer is credited in USD at the price of its own block (through the
-  subnet's alpha price at that block) and keeps that value. The
-  account pays for all of the coldkey's hotkeys; a transfer from any other coldkey does not count for your hotkey.
-  Only plain transfers signed by the coldkey count (as made by `axonry-miner deposit`), not transfers through a
-  proxy or multisig.
+- Fund the account of **the coldkey that owns the hotkey**: transfer alpha of this subnet (the accepted assets
+  are in the rules) from that coldkey to the subnet's treasury (`fee.treasury` in the rules), any amount, at any
+  time, as often as you like. Each transfer is credited in USD at the price of its own block (through the subnet's
+  alpha price at that block) and keeps that value. The account pays for all of the coldkey's hotkeys; a
+  transfer from any other coldkey does not count for your hotkey. Only plain transfers signed by the coldkey count
+  (as made by `axonry-miner deposit`), not transfers through a proxy or multisig.
 - Your entry is reviewed once the account covers a whole run (the maximum cost above), besides what its other
   queued or running entries still hold. Nothing is charged before the run: a rejected review costs nothing (the hotkey's
   entry is spent all the same).
@@ -118,7 +115,7 @@ in advance (`axonry-miner price`): every GPU hour up to the deadline plus the ag
    Runs may finish in any order, but results are decided strictly in priority order against the champion of
    that moment.
 
-The price, the GPUs, the run time, the base model, the benchmarks and the decision thresholds are part of the season's
+The price, the GPUs, the run time, the base model, the benchmarks and the decision thresholds are part of the
 published rules (`axonry-miner` reads them for you).
 
 ## Running a validator
@@ -150,7 +147,7 @@ No storage keys, GPUs or data are needed.
 
 Everything the subnet decides is published at `https://storage.axonry.ai` and can be recomputed:
 
-- the rules of each season;
+- the rules, every version (they change only by new versions, from a given block; the champion carries on);
 - the live queue (`status.json`, about once a minute): every registered miner with its account (deposits,
   charges, held, available, in USD) and, while it runs, its run's progress line and GPU use;
 - for every submission: its record, admission result, per-question results, scores, edit and agent log;

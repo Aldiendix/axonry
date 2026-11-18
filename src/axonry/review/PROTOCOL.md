@@ -9,7 +9,7 @@ How a submission goes from pull request to run, and who does what. Three indepen
 | Orchestrator | chain, GitHub, its DB | DB, lock tags, merges, public files | all operating keys |
 
 The reviewer never sees the orchestrator's state; the orchestrator trusts a review only from an account listed in the
-season's `review.reviewers`, and only for the content it was made on.
+rules' `review.reviewers`, and only for the content it was made on.
 
 ## 1. Before review (orchestrator)
 
@@ -74,14 +74,12 @@ From the lock on, pushes to the PR never affect the entry.
 - A run is charged for its GPUs by the hour (one hour's price at each full hour from its start, and at its end -
   the deadline, or the agent's `axonry-done` - the time actually used) and, at its end, for its agent's model use
   (at most the agent budget); never more than its account was holding.
-- Decisions do not follow finishing order. Each season is walked in priority order: a scored submission is judged
+- Decisions do not follow finishing order. Entries are walked in priority order: a scored submission is judged
   against the champion of that moment, and the walk stops at the first earlier submission still in review, queued,
   running or being evaluated. A later commitment - a copy that slipped through, or a lucky run - is never judged
   before the earlier content it may have copied. `WAITING` submissions (no PR or no funds yet) do not hold the
   walk: a miner who does not show up cannot stall everyone.
 - A new champion's locked commit is merged into the main branch; every PR gets its result as a comment.
-- A season may open with an initial champion (rules `initial_champion`): a pinned edit, the season's first entry
-  (`<effective_block>-0000`), with no hotkey, PR, review or run. It is admitted and evaluated, then is champion
-  without a match; its weight goes to uid 0.
+- Until there is a champion, the base model is the reference and the weight goes to uid 0 (burned).
 - A run found afterwards to break the rules (e.g. its public agent log shows benchmark data or outside weights) is
   disqualified by the owner, publicly (`ruling.json`); a champion's title goes back to the previous one.

@@ -172,7 +172,7 @@ def board(status: dict, matches: dict | None, n=20, color=None) -> str:
     heads = ["DECIDED (UTC)", "UID", "HOTKEY", "SID", "PR", "VS", *(k.split("@")[0] for k in benches), "RESULT"]
     out.append(table(f"3. Recent matches (last {n}): score[not-worse at, win at] vs the champion of the moment",
                      heads, rows, st, right=(1,)))
-    out.append(st(f"status {_ts(status.get('updated_at'))} UTC · season {status.get('season', '-')} · a uid is shown "
+    out.append(st(f"status {_ts(status.get('updated_at'))} UTC · a uid is shown "
                   "while the hotkey is registered · one miner in full: axonry-miner board <uid|hotkey|sid>", DIM))
     return "\n".join(out)
 

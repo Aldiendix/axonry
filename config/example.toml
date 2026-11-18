@@ -35,7 +35,7 @@ ssh_key = "~/.ssh/axonry_vast"  # the orchestrator's key: root on every machine 
 eval_gpus = 8                 # the evaluation machine's GPUs (an owned evaluation host must have exactly these)
 eval_gpu_name = "RTX 4090"    # every evaluation of a season on one GPU model: scores are compared across runs
 eval_idle_minutes = 20        # a vast.ai evaluation machine is released after this long without work
-# proxy_command = "nc -X 5 -x 127.0.0.1:1084 %h %p"   # only where this host reaches the internet through a proxy
+# proxy_command = "nc -X 5 -x PROXY_HOST:PORT %h %p"   # only where this host reaches the internet through a proxy
 
 # Owned hosts (pool/owned.py; set up automatically on first use: Docker, the NVIDIA runtime, firewall, jump user, image).
 # role "run": one run per <rules run.gpus> GPUs, a fresh container each; role "eval": the evaluation machine.

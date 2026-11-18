@@ -121,7 +121,7 @@ def _prepare(a, r):
             raise SystemExit(f"{f} missing in {a.dir}")
     entry = json.load(open(os.path.join(a.dir, "entry.json")))
     if entry.get("base") != rules["base"]:
-        raise SystemExit(f"entry.json base {entry.get('base')} is not this season's base {rules['base']}")
+        raise SystemExit(f"entry.json base {entry.get('base')} is not the base in the rules, {rules['base']}")
     wallet = Wallet(name=a.wallet, hotkey=a.hotkey, **({"path": a.wallet_path} if a.wallet_path else {}))
     hk = wallet.hotkey.ss58_address
     if f"submissions/{hk}/" not in os.path.abspath(a.dir).replace(os.sep, "/") + "/":
