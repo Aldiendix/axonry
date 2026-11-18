@@ -1,4 +1,4 @@
 [submodule "WeightSpaceProgramming"]
 	path = WeightSpaceProgramming
-	url = git@github.com:AxOrganization/WeightSpaceProgramming.git
+	url = https://github.com/AxOrganization/WeightSpaceProgramming.git
 	branch = master
