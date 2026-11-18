@@ -278,8 +278,6 @@ def detail(reader, status, matches, key, color=None) -> str:
         head(f"RUN (live, sampled {_ts(run.get('sampled_at'))} UTC)")
         kv("deadline", f"{_ts(run.get('deadline'))} UTC · {_left(run.get('deadline'), now)} left")
         kv("progress", clean(run.get("note")) or st("no progress line yet", DIM))
-        if run.get("agent_tokens_m") is not None:
-            kv("agent", f"{run['agent_tokens_m']:.2f} M tokens so far")
         for i, g in enumerate(run.get("gpus") or []):
             u = g["util_pct"]
             bar = st("█" * (u // 5), GREEN if u >= 50 else YELLOW) + st("░" * (20 - u // 5), DIM)
