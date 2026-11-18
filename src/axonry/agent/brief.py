@@ -108,9 +108,8 @@ the parent unchanged, improves nothing.
 
 ## Progress
 Keep `PROGRESS.md` in the sandbox, at `/workspace/work/PROGRESS.md`, up to date (every ~30 min): what is done,
-what is next. Its first line is your status, shown publicly on the website while you run: one sentence of at most 20
-words for a reader who knows nothing of your work - plain words, no file or edit names, no abbreviations, and numbers
-only with what they mean. When a turn ends before the deadline you will be asked to continue from it.
+what is next. Its first line is your status, shown publicly while you run: one plain sentence of at most 20 words.
+When a turn ends before the deadline you will be asked to continue from it.
 """
 
 
