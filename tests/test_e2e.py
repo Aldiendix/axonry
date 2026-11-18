@@ -973,3 +973,24 @@ def test_started_before_the_first_season_it_waits(tmp_path):
     orch.bootstrap()
     orch.publish_status(every=0)
     assert pub.get(layout.WEIGHTS) is None and orch.db.get("cursor") == 499
+
+
+def test_a_new_season_takes_over_the_weights_at_its_block(tmp_path):
+    from axonry.common.canon import write_json
+    orch, chain, clock, pub = make(tmp_path)
+    root = registry_copy(tmp_path, effective_block=100)
+    orch.d.registry_root = root
+    chain.head = 120
+    orch.intake()
+    orch.bootstrap()
+    assert json.loads(pub.get(layout.WEIGHTS))["season"] == "s1"
+    s1 = json.loads(next((root / "seasons" / "s1").glob("*.json")).read_text())
+    (root / "seasons" / "s2").mkdir()
+    write_json(root / "seasons" / "s2" / "v1.json", {**s1, "season": "s2", "effective_block": 130})
+    orch.refresh_weights()
+    assert json.loads(pub.get(layout.WEIGHTS))["season"] == "s1"          # staged, not in force yet
+    chain.head = 131
+    orch.refresh_weights()
+    w = json.loads(pub.get(layout.WEIGHTS))
+    assert w["season"] == "s2" and w["weights"] == [{"hotkey": None, "uid": 0, "weight": 1.0}]
+    assert json.loads(pub.get(layout.INDEX))["current_season"] == "s2"

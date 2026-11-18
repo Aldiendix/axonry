@@ -852,20 +852,26 @@ class Orchestrator:
         publisher.publish_index(self.d.public, season, rules.sha256)
 
     def bootstrap(self):
-        """Publish definitions, and an initial weights.json (uid0 = burn) if none exists yet."""
+        """Publish definitions and the index of the rules in force, and an initial weights.json (uid0 = burn) if none
+        exists yet."""
         publisher.publish_registry(self.d.public, self.d.registry_root)
         if self.d.public.get(layout.WEIGHTS) is None:
             self.publish_weights()
+        elif rules := self._in_force(self.d.chain.finalized_head()):     # the rules in force, as now in the registry
+            publisher.publish_index(self.d.public, rules.season, rules.sha256)
 
     def refresh_weights(self, max_age=86400):
-        """Re-issue weights.json when it is old or the champion's uid changed (re-registration)."""
+        """Re-issue weights.json when it is old, a new season is in force, or the champion's uid changed
+        (re-registration)."""
         raw = self.d.public.get(layout.WEIGHTS)
         if raw is None:
             return self.publish_weights()
         cur = json.loads(raw)
         champ = cur.get("champion")
         moved = bool(champ) and self.d.chain.uid_of(champ["hotkey"], cur["netuid"]) != champ.get("uid")
-        if moved or self.d.clock() - cur.get("issued_at", 0) > max_age:
+        rules = self._in_force(self.d.chain.finalized_head())
+        new_season = rules is not None and rules.season != cur.get("season")
+        if moved or new_season or self.d.clock() - cur.get("issued_at", 0) > max_age:
             self.publish_weights()
 
     def publish_status(self, every=60):
