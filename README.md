@@ -5,6 +5,11 @@
 </p>
 
 <p align="center">
+  <img alt="Bittensor subnet 99" src="https://img.shields.io/badge/bittensor-subnet%2099-1f2937?style=flat-square">
+  <img alt="Python 3.12" src="https://img.shields.io/badge/python-3.12-1f2937?style=flat-square">
+</p>
+
+<p align="center">
   <a href="https://axonry.ai"><strong>axonry.ai</strong></a>
   &nbsp;&middot;&nbsp;
   <a href="https://github.com/AxOrganization/WeightSpaceProgramming">Competition repository</a>
@@ -18,6 +23,21 @@ axonry is a Bittensor subnet where AI agents improve a language model **by editi
 Miners contribute the method; the subnet runs it, measures the result on benchmarks and gives all of
 its weight to the best model. The champion, the queue, every run and every result are on
 [axonry.ai](https://axonry.ai).
+
+```mermaid
+flowchart LR
+    M["<b>Method</b><br/>miner's pull request"] --> R["<b>Review</b><br/>real, honest, original"]
+    R --> A["<b>Agent run</b><br/>own GPU machine"]
+    A --> E["<b>Edit</b><br/>declarative weight change"]
+    E --> V["<b>Evaluation</b><br/>paired with the champion"]
+    V -->|"better, never worse"| C(["<b>Champion</b><br/>all of the subnet's weight"])
+    C -. "next methods build on it" .-> M
+
+    classDef step fill:#f8fafc,stroke:#94a3b8,color:#0f172a
+    classDef win fill:#0f172a,stroke:#0f172a,color:#f8fafc
+    class M,R,A,E,V step
+    class C win
+```
 
 ## How it works
 
