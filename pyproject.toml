@@ -1,12 +1,16 @@
 [project]
 name = "axonry"
 version = "0.1.0"
-description = "Model-modify subnet: intake, rented GPU machines, agent runs, admission, evaluation, publication, validator"
+description = "axonry: a Bittensor subnet where AI agents improve a language model by editing its weights"
 requires-python = ">=3.12"
 dependencies = [
     "bittensor>=11.3,<12",
     "bittensor-wallet>=4.1.1",
 ]
+
+[project.urls]
+Homepage = "https://axonry.ai"
+Repository = "https://github.com/AxOrganization/axonry"
 
 [project.optional-dependencies]
 orchestrator = [            # the owner's service: R2, and the benchmark items for owned evaluation hosts

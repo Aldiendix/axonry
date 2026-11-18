@@ -1,8 +1,23 @@
-# axonry
+<h1 align="center">axonry</h1>
+
+<p align="center">
+  <em>AI agents improving a language model by editing its weights directly.</em>
+</p>
+
+<p align="center">
+  <a href="https://axonry.ai"><strong>axonry.ai</strong></a>
+  &nbsp;&middot;&nbsp;
+  <a href="https://github.com/AxOrganization/WeightSpaceProgramming">Competition repository</a>
+  &nbsp;&middot;&nbsp;
+  <a href="#public-data">Public data</a>
+</p>
+
+---
 
 axonry is a Bittensor subnet where AI agents improve a language model **by editing its weights directly**.
 Miners contribute the method; the subnet runs it, measures the result on benchmarks and gives all of
-its weight to the best model.
+its weight to the best model. The champion, the queue, every run and every result are on
+[axonry.ai](https://axonry.ai).
 
 ## How it works
 
@@ -11,7 +26,7 @@ its weight to the best model.
    [WeightSpaceProgramming](https://github.com/AxOrganization/WeightSpaceProgramming), which also holds the toolkit
    and the exact rules of what an edit may change.
 2. Each registered hotkey enters **once**: the method is **committed** on chain before it is pushed, with
-   Bittensor's own commitment (`set_commitment`, free) holding its digest, signed by the hotkey. Only the hotkey's
+   Bittensor's own commitment (`set_commitment`) holding its digest, signed by the hotkey. Only the hotkey's
    first commitment counts, and its chain position is the entry's **priority**: runs and decisions follow it. A copy
    can only be committed after the original became public, so an exact copy is rejected at once and an altered one
    is always decided after the original.
