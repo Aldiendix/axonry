@@ -25,7 +25,7 @@ class FakeHost:
     def ssh(self, m, key, command, timeout=0, attempts=3):
         if self.down:
             raise MachineError("ssh: connect to host: No route to host")
-        if m.port != 22:                                   # inside a container (through the jump host)
+        if m.jump:                                         # inside a container (through the jump host)
             assert m.jump and m.jump.user == "root" and m.ip == "127.0.0.1"
             return ""
         if command.startswith("nvidia-smi"):
@@ -75,7 +75,8 @@ def finish(fake, prefix):
 
 def test_runs_get_fresh_containers_in_free_slots(tmp_path):
     clock, fake = [1000.0], FakeHost()
-    p, db = pool(tmp_path, [{"name": "rig", "address": "203.0.113.5", "role": "run", "china": True}], fake, clock)
+    p, db = pool(tmp_path, [{"name": "rig", "address": "203.0.113.5", "port": 9000, "role": "run", "china": True}],
+                 fake, clock)
     assert p.rent("s1", "RTX 4090", 4) and p.rent("s2", "RTX 4090", 4)
     assert not p.rent("s3", "RTX 4090", 4)                                  # two slots of 4 GPUs: both taken
     assert not p.rent("s4", "RTX 5090", 4)                                  # another GPU model
@@ -90,7 +91,7 @@ def test_runs_get_fresh_containers_in_free_slots(tmp_path):
     assert p.advance("s2") == "ready" and fake.last_run[1:3] == ["2", "4,5,6,7"]   # host ready: seconds
     m = p.hand_over("s2", "ssh-ed25519 BBBB agent", 2000)
     assert (m.ip, m.port, m.user) == ("127.0.0.1", 2302, "agent")
-    assert (m.jump.host, m.jump.port, m.jump.user) == ("203.0.113.5", 22, "axjump") and m.jump.proxy_command is None
+    assert (m.jump.host, m.jump.port, m.jump.user) == ("203.0.113.5", 9000, "axjump") and m.jump.proxy_command is None
     assert fake.jumps == {"2302": "'ssh-ed25519 BBBB agent'"}               # forwarded to its own port only
     assert not p.vanished("s2")
     fake.containers.pop("axonry-run2")                                      # host rebooted, container gone

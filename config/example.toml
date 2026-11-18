@@ -43,6 +43,7 @@ eval_idle_minutes = 20        # a vast.ai evaluation machine is released after t
 # [[machines.owned]]
 # name = "rig-1"
 # address = "203.0.113.10"
+# port = 22                  # its ssh port
 # role = "run"
 # china = true
 

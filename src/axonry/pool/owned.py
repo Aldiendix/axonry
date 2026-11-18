@@ -3,7 +3,7 @@
 A host has one role. An evaluation host runs one container on all its GPUs (the evaluation machine); a run host has
 slots of a run's GPUs each, and every run gets a fresh container in a free slot, removed when the run ends. The
 containers run the pinned image set up by setup.sh, exactly as a vast instance: the same layout, the same checks,
-the same tools. pool/host.sh does the host's side (over ssh as root, port 22):
+the same tools. pool/host.sh does the host's side (over ssh as root, on the host's ssh port):
 
   init   once per version of host.sh: Docker and the NVIDIA runtime, the firewall (containers open no connection to
          the host, nor to each other), the jump user, sshd, the pinned image. A host whose GPUs are busy with other
@@ -51,7 +51,7 @@ def _sha12(path: Path) -> str:
 class OwnedPool:
     def __init__(self, hosts: list, db, *, image: str, ssh_key: str, bundle, items, state_dir: Path,
                  proxy_command=None, setup_minutes=180, clock=time.time, remote=None):
-        """hosts: [{"name", "address", "role": "run" | "eval", "china": bool}]. bundle, items: () -> path of the setup
+        """hosts: [{"name", "address", "port" (ssh, default 22), "role": "run" | "eval", "china": bool}]. bundle, items: () -> path of the setup
         bundle, of the benchmark items (built when an evaluation host first needs them). setup_minutes: a first init (Docker, a ~25 GB image) can take long; it continues on the host when a
         machine row gives up. remote: (ssh, scp) for tests."""
         self.hosts = {h["name"]: h for h in hosts}
@@ -64,10 +64,12 @@ class OwnedPool:
 
     # ---- the hosts
     def _host(self, name) -> Machine:
-        return Machine(name, self.hosts[name]["address"], 22, str(self.dir / f"host-{name}.known_hosts"), self.proxy)
+        h = self.hosts[name]
+        return Machine(name, h["address"], int(h.get("port", 22)), str(self.dir / f"host-{name}.known_hosts"), self.proxy)
 
     def _jump(self, name, user) -> Jump:
-        return Jump(self.hosts[name]["address"], 22, user, str(self.dir / f"host-{name}.known_hosts"),
+        return Jump(self.hosts[name]["address"], int(self.hosts[name].get("port", 22)), user,
+                    str(self.dir / f"host-{name}.known_hosts"),
                     self.proxy if user == "root" else None)
 
     def _hsh(self, name, args: str, timeout=300) -> str:
