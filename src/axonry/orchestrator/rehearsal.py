@@ -484,7 +484,7 @@ class World:
         s = self.db.sub(sid)
         t = s["record"]["timeline"]
         want = (pricing.used_musd(self.rules, t["agent_end"] - t["kickoff"])
-                + pricing.agent_musd(self.rules, (s["record"].get("agent") or {}).get("usd"))) if t.get("agent_end") else None
+                + pricing.agent_musd(self.rules, ((s["record"].get("run") or {}).get("agent") or {}).get("usd"))) if t.get("agent_end") else None
         got = sum(self.db.charged(sid).values())
         self.check(f"{sid} charged for its run time", want is not None and got == want,
                    f"charged {got / 1e6:.4f} USD for {((t.get('agent_end') or 0) - t['kickoff']) / 3600:.2f} h "

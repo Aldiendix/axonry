@@ -23,7 +23,7 @@ class RunStatus:
 
 
 class AgentRunner(Protocol):
-    name: str            # recorded with every run (submission.json -> agent.runner)
+    name: str            # recorded with every run (submission.json -> run.agent.runner)
     capacity: int        # runs it can take at once
 
     def prepare(self, sid: str, hotkey: str, busy: list[RunHandle]) -> RunHandle: ...  # busy: runs under way

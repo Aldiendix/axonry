@@ -419,7 +419,6 @@ class Orchestrator:
         self.db.save_run(sid, task=without_secrets(task), handle=asdict(h), sup_state={})
         self.db.update(sid, "RUNNING", record_patch={
             "timeline": {**rec["timeline"], "kickoff": start, "deadline": deadline},
-            "agent": {"runner": getattr(self.d.runner, "name", "unknown")},
             "sandbox": {"resources": resources}})
 
     def _parent_files(self, parent_sid) -> dict:
@@ -495,7 +494,6 @@ class Orchestrator:
                 "run": self._run_view(s, {**r, "sup_state": st}, end),     # as status.json showed it, at its end
                 "agent_log": "published" if exported else "unavailable",
                 "agent_outcome": outcome,
-                "agent": {**s["record"].get("agent", {}), "usd": st.get("usd")},
                 "fee": {**s["record"].get("fee", {}), "charged_usd": sum(self.db.charged(sid).values()) / 1e6},
                 "timeline": {**s["record"]["timeline"], "agent_end": end}})
 
@@ -949,9 +947,10 @@ class Orchestrator:
         live, kick = sup.get("live") or {}, s["record"]["timeline"].get("kickoff")
         return {"sid": s["sid"], "deadline": (r.get("task") or {}).get("run", {}).get("deadline"),
                 "note": live.get("note"), "gpus": live.get("gpus"), "sampled_at": live.get("at"),
-                "agent_model": handle.get("model") or getattr(self.d.runner, "model", None),
-                "agent_tokens_m": round(sup["tokens"] / 1e6, 2) if sup.get("tokens") is not None else None,
-                "agent_usd": round(sup["usd"], 2) if sup.get("usd") is not None else None,
+                "agent": {"runner": getattr(self.d.runner, "name", None),
+                          "model": handle.get("model") or getattr(self.d.runner, "model", None),
+                          "tokens_m": round(sup["tokens"] / 1e6, 2) if sup.get("tokens") is not None else None,
+                          "usd": round(sup["usd"], 2) if sup.get("usd") is not None else None},
                 "gpu_usd": (round(pricing.used_musd(self.rules_for(s["sid"]), at - kick) / pricing.MUSD, 2)
                             if kick else None)}
 

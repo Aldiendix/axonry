@@ -481,7 +481,7 @@ def test_accounts_and_fees(tmp_path):
     assert m["account"]["held_usd"] == RUN_USD - 2 * HOUR / pricing.MUSD and m["run"]["sid"] == sid
     assert m["run"]["note"] == "Screening directions on [redacted]; best so far +2.1"   # the run's secrets removed
     assert [g["util_pct"] for g in m["run"]["gpus"]] == [97] * 4 and m["run"]["sampled_at"] == clock.t
-    assert m["run"]["agent_tokens_m"] == 12.35                                   # the agent's tokens so far
+    assert m["run"]["agent"]["tokens_m"] == 12.35                                # the agent's tokens so far
     assert m["run"]["gpu_usd"] == round(pricing.used_musd(RULES, clock.t - kick) / 1e6, 2)   # its GPUs so far
     from axonry.miner.board import board, detail
     reader = miner.PublicReader(store=pub)
@@ -496,7 +496,7 @@ def test_accounts_and_fees(tmp_path):
     s = orch.db.sub(sid)
     used = pricing.used_musd(RULES, clock.t - kick)
     assert s["status"] == "COLLECTING" and s["record"]["agent_outcome"] == "finished"
-    assert s["record"]["run"]["gpu_usd"] == round(used / 1e6, 2) and s["record"]["run"]["agent_tokens_m"] == 12.35
+    assert s["record"]["run"]["gpu_usd"] == round(used / 1e6, 2) and s["record"]["run"]["agent"]["tokens_m"] == 12.35
     assert s["record"]["run"]["note"].startswith("Screening directions")      # the run's last view is kept
     assert orch.d.fleet.get(sid) is None and sid in orch.d.fleet.released           # the machine is released
     assert sum(orch.db.charged(sid).values()) == used and s["record"]["fee"]["charged_usd"] == used / 1e6
