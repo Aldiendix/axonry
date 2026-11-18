@@ -131,10 +131,7 @@ class Orchestrator:
         becomes its one and only submission; any later commitment of that hotkey counts for nothing. Then every
         submission before its lock is advanced."""
         head = self.d.chain.finalized_head()
-        try:
-            rules = registry.rules_at(head, self.d.registry_root)
-        except registry.RegistryError:
-            rules = None                      # no season in force yet
+        rules = self._in_force(head)
         if rules:
             self._seed_initial(rules)
         cursor = self.db.get("cursor")
@@ -829,9 +826,18 @@ class Orchestrator:
                                    "evidence": json.loads(c["evidence"])} for c in self.db.champions(season)]
         publisher.publish_season(self.d.public, season, rows, leaderboard)
 
+    def _in_force(self, head):
+        """The rules in force at `head` (a next season may be staged), or None before the first season opens."""
+        try:
+            return registry.rules_at(head, self.d.registry_root)
+        except registry.RegistryError:
+            return None
+
     def publish_weights(self):
         head = self.d.chain.finalized_head()
-        rules = registry.rules_at(head, self.d.registry_root)      # the season in force (a next one may be staged)
+        rules = self._in_force(head)
+        if rules is None:
+            return
         season = rules.season
         champ = self.db.champion(season)
         info = None
@@ -882,7 +888,9 @@ class Orchestrator:
         for s in (x for x in by_prio if x["status"] == "RUNNING"):
             run = self.db.run(s["sid"]) or {}
             running.append({**row(s), "deadline": (run.get("task") or {}).get("run", {}).get("deadline")})
-        rules = registry.rules_at(self.d.chain.finalized_head(), self.d.registry_root)
+        rules = self._in_force(self.d.chain.finalized_head())
+        if rules is None:
+            return
         champ = self.db.champion(rules.season)
         accounts = self.db.accounts()
         doc = {"schema": publisher.SCHEMAS["status"], "updated_at": self.now(), "season": rules.season,

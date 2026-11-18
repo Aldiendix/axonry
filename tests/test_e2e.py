@@ -961,3 +961,13 @@ def test_the_first_intake_starts_at_the_first_seasons_effective_block(tmp_path):
     chain.items_in_block = lambda b, *a: read.append(b) or items(b, *a)
     orch.intake()
     assert read == list(range(105, 121)) and orch.db.get("cursor") == 120
+
+
+def test_started_before_the_first_season_it_waits(tmp_path):
+    orch, chain, clock, pub = make(tmp_path)
+    orch.d.registry_root = registry_copy(tmp_path, effective_block=500)
+    chain.head = 120
+    orch.intake()
+    orch.bootstrap()
+    orch.publish_status(every=0)
+    assert pub.get(layout.WEIGHTS) is None and orch.db.get("cursor") == 499
