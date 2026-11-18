@@ -5,13 +5,16 @@
         entries not in the queue and why, recent matches with per-benchmark thresholds;
         MINER (a uid, hotkey, coldkey or submission id): that miner in full - account, entry, its run live (each
         GPU), timeline, admission and the result per benchmark
-  axonry-miner price                                    what a run costs at most, in USD and in the accepted assets now
-  axonry-miner deposit --amount X --wallet W --hotkey H [--asset alpha|tao] [--yes]
-        transfer from the coldkey owning H to the subnet; credited in USD at that block's price to that coldkey's
-        account, which pays H's run
-  axonry-miner commit --dir DIR --github LOGIN --wallet W --hotkey H [--yes]
+  axonry-miner price                                    what a run costs at most, in USD and in the accepted asset now
+  axonry-miner deposit [--amount X] [--wallet W] [--hotkey H] [--yes]
+        transfer from the coldkey owning H to the subnet's treasury (from the published rules); credited in USD at
+        that block's price to that coldkey's account, which pays H's run. Without --amount: what the account still
+        lacks for a run, at the current price
+  axonry-miner commit --dir DIR --github LOGIN [--wallet W] [--hotkey H] [--yes]
         the entry of hotkey H, once: set_commitment "<digest>:<GitHub id of LOGIN>" signed by H (registered on the
-        subnet); only a PR by LOGIN, in H's directory, with exactly this content can carry it
+        subnet; from the rules' open_block on); only a PR by LOGIN, in H's directory, opened after the commitment,
+        with exactly this content can carry it
+  W and H are bittensor wallet and hotkey names (default: "default", as in btcli).
 One registration is one entry: only a hotkey's first commitment counts, and the content and GitHub account it names
 can never change. Commit first and push only after the command returns: a content belongs to its earliest commitment,
 and content pushed before it is committed can be copied and committed first by others. The run is paid by the
@@ -31,6 +34,7 @@ import urllib.request
 from ..common import layout
 from ..common.digest import content_digest
 from ..common.ids import make_commitment
+
 
 def public_url(network="finney"):
     """The subnet's published data location (axonry_validator.network); AXONRY_PUBLIC_URL overrides it for testing."""
@@ -73,9 +77,6 @@ def cmd_price(r, network):
     from .. import pricing  # noqa: PLC0415
     rules = r.rules()
     run, top = rules["run"], pricing.run_cost_musd(rules) / pricing.MUSD
-    tao_usd, sources = pricing.tao_usd_at(int(time.time()))
-    alpha = _alpha_price(network, rules) if "alpha" in rules["fee"]["assets"] else None
-    now = {"tao": top / tao_usd, "alpha": top / tao_usd / alpha if alpha else None}
     slip = rules["fee"].get("slippage", 0)
     print(f"a run: {run['gpus']} x {run['gpu_model']}, at most {run['hours']} h")
     print(f"  GPUs     {rules['fee']['usd_per_gpu_hour']} USD per GPU-hour, at most "
@@ -84,10 +85,23 @@ def cmd_price(r, network):
     if slip:
         print(f"  margin   {slip:.0%}")
     print(f"  held     {top:.2f} USD: your account must hold this before review")
-    print(f"  now      " + " or ".join(f"{v:.6f} {a}" for a, v in now.items() if v and a in rules["fee"]["assets"])
-          + f" (TAO/USD {tao_usd:.2f} from {', '.join(sources)})")
+    try:
+        usd, note = asset_usd(network, rules)
+        print("  now      " + " or ".join(f"{top / v:.6f} {a}" for a, v in usd.items()) + f" ({note})")
+    except Exception as e:  # noqa: BLE001 - the price sources are unreachable from here: the USD figures stand
+        print(f"  now      no price available here ({str(e)[:120]})")
     print("Nothing is charged until the run starts. Each full GPU hour is charged as it passes; the rest of the GPU time\n"
           "and the agent's use when the run ends. A deposit counts in USD at the price of its block.")
+
+
+def asset_usd(network, rules) -> tuple[dict, str]:
+    """USD per unit of each accepted asset now (TAO/USD from public sources, alpha via the subnet's alpha price)."""
+    from .. import pricing  # noqa: PLC0415
+    tao_usd, sources = pricing.tao_usd_at(int(time.time()))
+    usd = {"tao": tao_usd}
+    if "alpha" in rules["fee"]["assets"]:
+        usd["alpha"] = tao_usd * _alpha_price(network, rules)
+    return {a: usd[a] for a in rules["fee"]["assets"]}, f"TAO/USD {tao_usd:.2f} from {', '.join(sources)}"
 
 
 def _alpha_price(network, rules):
@@ -119,7 +133,11 @@ def _prepare(a, r):
     chain = Chain(subtensor=sub)
     if chain.uid_of(hk, rules["netuid"], None) is None:
         raise SystemExit(f"{hk} is not registered on subnet {rules['netuid']}: only a registered hotkey can commit")
-    if chain.has_committed(hk, rules["netuid"]):
+    from axonry_validator.network import NETWORKS  # noqa: PLC0415
+    owner, opens = NETWORKS.get(a.network, {}).get("owner"), rules.get("open_block", 0)
+    if hk != owner and int(sub.block) < opens:
+        raise SystemExit(f"entries open at block {opens} (now {int(sub.block)}): an earlier commitment does not count")
+    if hk != owner and chain.has_committed(hk, rules["netuid"]):
         raise SystemExit(f"{hk} has committed on subnet {rules['netuid']} before: one registration is one entry "
                          "(only its first commitment counts); use a new hotkey")
     gid = github_id(a.github)
@@ -169,6 +187,17 @@ def cmd_deposit(a, r):
     owner = Chain(subtensor=sub).owner_of(hk, None)
     if owner != ck:
         raise SystemExit(f"hotkey {hk} is owned by {owner}, not by this wallet's coldkey {ck}: pay from its owner")
+    if a.amount is None:
+        top = pricing.run_cost_musd(rules) / pricing.MUSD
+        have = ((r.get(layout.STATUS) or {}).get("accounts", {}).get(ck) or {}).get("available_usd", 0)
+        if have >= top:
+            raise SystemExit(f"the account of {ck} already covers a run ({have:.2f} of {top:.2f} USD available)")
+        try:
+            per = asset_usd(a.network, rules)[0][a.asset]
+        except Exception as e:  # noqa: BLE001
+            raise SystemExit(f"no price available here ({str(e)[:120]}): give --amount") from None
+        a.amount = round((top - have) / per * 1.01 + 5e-7, 6)    # 1% for the price moving before the block
+        print(f"the account has {have:.2f} of the {top:.2f} USD a run holds: {a.amount} {a.asset} covers the rest")
     treasury, amount = rules["fee"]["treasury"], int(round(a.amount * pricing.RAO))
     staked = a.stake_hotkey or hk
     print(f"depositing {a.amount} {a.asset} from coldkey {ck} to {treasury}" +
@@ -182,9 +211,9 @@ def cmd_deposit(a, r):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="axonry-miner", description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(prog="axonry-miner", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--network", default="finney")
-    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub = ap.add_subparsers(dest="cmd")
     b = sub.add_parser("board", help="the subnet at a glance, or one miner in full")
     b.add_argument("miner", nargs="?", help="a uid, hotkey, coldkey or submission id: that miner in full")
     b.add_argument("-n", type=int, default=20, help="recent matches to show")
@@ -192,19 +221,22 @@ def main(argv=None):
     b.add_argument("--watch", type=int, default=0, metavar="SECONDS", help="redraw every SECONDS (e.g. 60)")
     sub.add_parser("price", help="what a run costs at most")
     c = sub.add_parser("commit", help="the hotkey's one entry: commit the content on chain, then push the PR")
-    c.add_argument("--dir", required=True)
-    c.add_argument("--hotkey", required=True)
+    c.add_argument("--dir", required=True, help="submissions/<your hotkey>/<entry>/")
     c.add_argument("--github", required=True, help="GitHub login that opens (or opened) the pull request")
-    d = sub.add_parser("deposit", help="fund the account of the coldkey that owns the hotkey")
-    d.add_argument("--amount", type=float, required=True)
-    d.add_argument("--asset", choices=("tao", "alpha"), help="default: the first asset the season accepts")
-    d.add_argument("--hotkey", required=True, help="the miner hotkey (wallet hotkey name) this deposit pays for")
+    d = sub.add_parser("deposit", help="fund the account of the coldkey that owns the hotkey (sent to the "
+                                       "treasury named in the published rules)")
+    d.add_argument("--amount", type=float, help="default: what the account still lacks for a run, at the current price")
+    d.add_argument("--asset", choices=("tao", "alpha"), help="default: the asset the rules accept")
     d.add_argument("--stake-hotkey", help="alpha: the hotkey (ss58) the stake to move sits on (default: --hotkey's)")
     for s in (c, d):
-        s.add_argument("--wallet", required=True)
-        s.add_argument("--wallet-path")
+        s.add_argument("--wallet", default="default", help="bittensor wallet name (default: default)")
+        s.add_argument("--hotkey", default="default", help="the miner hotkey's name in that wallet (default: default)")
+        s.add_argument("--wallet-path", help="wallets directory (default: bittensor's)")
         s.add_argument("--yes", action="store_true")
     a = ap.parse_args(argv)
+    if a.cmd is None:
+        ap.print_help()
+        return 0
     r = PublicReader(public_url(a.network))
     if a.cmd == "board":
         from .board import cmd_board  # noqa: PLC0415

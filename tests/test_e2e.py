@@ -998,8 +998,8 @@ def test_a_new_season_takes_over_the_weights_at_its_block(tmp_path):
 
 
 def test_commitments_before_the_opening_block_count_for_nothing(tmp_path):
-    """Before open_block only the subnet owner's commitment (the opening entry) counts; a miner's earlier
-    commitment is void and its first commitment from open_block on is its entry."""
+    """A miner's commitment before open_block is void and its first one from open_block on is its entry. The owner's
+    hotkey (burned weight) is bound by neither rule."""
     orch, chain, clock, pub = make(tmp_path)
     orch.d.registry_root = registry_copy(tmp_path, effective_block=100, open_block=110)
     commit(chain, "A", blobs_for("A"), 101)
@@ -1009,9 +1009,12 @@ def test_commitments_before_the_opening_block_count_for_nothing(tmp_path):
     orch.intake()
     assert [s["hotkey"] for s in orch.db.subs()] == [OWNER.ss58_address]
     commit(chain, "A", blobs_for("A"), 111)
-    chain.head = 111
+    chain.blocks[112] = [Commitment(112, 1, OWNER.ss58_address, content_digest_of_blobs(blobs_for("C")), 1, Clock.t)]
+    chain.head = 112
     orch.intake()
     assert orch.db.of_hotkey(HOTKEYS["A"])["sid"] == "0000000111-0001"
+    assert [s["sid"] for s in orch.db.subs() if s["hotkey"] == OWNER.ss58_address] == [
+        "0000000102-0001", "0000000112-0001"]
 
 
 def test_a_pr_opened_before_its_commitment_carries_nothing(tmp_path):

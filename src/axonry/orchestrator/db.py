@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS submissions (
   infra_retries INTEGER DEFAULT 0,
   pr_number INTEGER, head_sha TEXT, prio_block INTEGER, prio_index INTEGER,
   locked_commit TEXT, run_cost INTEGER);
-CREATE UNIQUE INDEX IF NOT EXISTS one_per_hotkey ON submissions(hotkey);
+DROP INDEX IF EXISTS one_per_hotkey;
+CREATE INDEX IF NOT EXISTS by_hotkey ON submissions(hotkey);
 CREATE INDEX IF NOT EXISTS by_digest ON submissions(content_digest);
 CREATE TABLE IF NOT EXISTS deposits (block INTEGER, idx INTEGER, coldkey TEXT, asset TEXT, amount INTEGER, ts INTEGER,
   usd INTEGER, price TEXT, PRIMARY KEY (block, idx, asset));
@@ -60,7 +61,8 @@ class DB:
                        (sid, season, hotkey, coldkey, status, content_digest, json.dumps(record), now, now, *prio))
 
     def of_hotkey(self, hotkey):
-        r = self.c.execute("SELECT * FROM submissions WHERE hotkey=?", (hotkey,)).fetchone()
+        r = self.c.execute("SELECT * FROM submissions WHERE hotkey=? ORDER BY prio_block DESC, prio_index DESC",
+                           (hotkey,)).fetchone()
         return self._row(r) if r else None
 
     def first_with_digest(self, digest):

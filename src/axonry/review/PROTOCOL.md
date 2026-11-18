@@ -16,8 +16,7 @@ season's `review.reviewers`, and only for the content it was made on.
 A miner is a hotkey, and one registration is one entry. The orchestrator reads every finalized block; a hotkey's
 first commitment on the subnet (`set_commitment` `<digest>:<GitHub id>`, which the chain only takes from a
 registered hotkey) is its submission, for good: `WAITING`, with its sid and priority = that chain position. Any
-later commitment of the hotkey counts for nothing. Commitments before the rules' `open_block` are void, except the
-subnet owner's (the opening entry). A digest committed earlier by another hotkey is a copy:
+later commitment of the hotkey counts for nothing. Commitments before the rules' `open_block` are void. A digest committed earlier by another hotkey is a copy:
 `REJECTED COPY` at once.
 
 A waiting submission goes to review (`REVIEW`) when

@@ -176,10 +176,10 @@ class Orchestrator:
     def _participant(self, c, rules):
         """One registration, one entry: the hotkey's first commitment is its submission (sid = its chain position,
         which is also its priority, fixed for good). A content already committed by another hotkey is a copy.
-        Commitments before the rules' open_block count for nothing, except the subnet owner's (the opening entry)."""
-        if self.db.of_hotkey(c.signer):
-            return
-        if c.block < rules.doc.get("open_block", 0) and c.signer != self.d.owner_keypair.ss58_address:
+        Commitments before the rules' open_block count for nothing. The owner's hotkey (its weight is burned) is
+        bound by neither."""
+        if c.signer != self.d.owner_keypair.ss58_address and (
+                self.db.of_hotkey(c.signer) or c.block < rules.doc.get("open_block", 0)):
             return
         sid = make_sid(c.block, c.extrinsic_index)
         rec = {"hotkey": c.signer, "season": rules.season, "rules_sha256": rules.sha256,
