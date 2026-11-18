@@ -34,6 +34,8 @@ def step(now: int, task: dict, handle, runner, state: dict, has_upload: bool, do
         runner.stop(handle)
         return "finished"
     cap = run.get("max_agent_usd")
+    if st.tokens is not None:
+        state["tokens"] = st.tokens
     if st.usd is not None:
         state["usd"] = st.usd
         if cap and st.usd >= cap:

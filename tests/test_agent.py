@@ -82,15 +82,15 @@ def test_reminders_before_the_deadline_and_finishing_when_the_agent_says_so():
 
 
 def test_the_agent_cost_is_its_projects_use_since_kickoff():
-    use = {"usd": 3.0}
+    use = {"usd": 3.0, "input": 100, "output": 20, "cache_read": 1000, "cache_write": 80}
 
     def run(account, args, timeout):
         return 0, json.dumps({"all": dict(use), "today": dict(use)}), ""
     r = ArbosRunner({"a": 1}, runner=run)
     h = RunHandle("s1", "p", "c", {"account": "a"})
     r.kickoff(h, "go", "bundle.tgz")                                   # a run lost before used 3.0 of this project
-    use["usd"] = 7.5
-    assert r.cost(h) == 4.5
+    use.update(usd=7.5, input=300, output=70)
+    assert r.cost(h) == 4.5 and r.use(h) == (4.5, 250)                           # tokens: also since kickoff
 
 
 def test_a_held_arbos_account_takes_no_run():

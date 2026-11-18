@@ -241,7 +241,7 @@ class FakeRunner:
 
     def poll(self, h):
         from axonry.agent.base import RunStatus
-        return RunStatus(False, Clock.t)
+        return RunStatus(False, Clock.t, tokens=12_345_678)
 
     def steer(self, h, m):
         pass
@@ -481,6 +481,7 @@ def test_accounts_and_fees(tmp_path):
     assert m["account"]["held_usd"] == RUN_USD - 2 * HOUR / pricing.MUSD and m["run"]["sid"] == sid
     assert m["run"]["note"] == "Screening directions on [redacted]; best so far +2.1"   # the run's secrets removed
     assert [g["util_pct"] for g in m["run"]["gpus"]] == [97] * 4 and m["run"]["sampled_at"] == clock.t
+    assert m["run"]["agent_tokens_m"] == 12.35                                   # the agent's tokens so far
     from axonry.miner.board import board, detail
     reader = miner.PublicReader(store=pub)
     st_doc = reader.get(layout.STATUS)

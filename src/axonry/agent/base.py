@@ -19,6 +19,7 @@ class RunStatus:
     pending_approvals: list = field(default_factory=list)
     error: str | None = None   # the backend cannot run the agent at all (e.g. its machine is held): ours
     usd: float | None = None   # what the run's agent has cost so far, workers included (None: not reported)
+    tokens: int | None = None  # the tokens it has used so far (input, output, cache), workers included
 
 
 class AgentRunner(Protocol):

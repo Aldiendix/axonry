@@ -951,9 +951,12 @@ class Orchestrator:
         runs = {}
         for s in self.db.subs(status=("RUNNING",)):
             r = self.db.run(s["sid"]) or {}
-            live = (r.get("sup_state") or {}).get("live") or {}
+            sup = r.get("sup_state") or {}
+            live = sup.get("live") or {}
             runs[s["hotkey"]] = {"sid": s["sid"], "deadline": (r.get("task") or {}).get("run", {}).get("deadline"),
-                                 "note": live.get("note"), "gpus": live.get("gpus"), "sampled_at": live.get("at")}
+                                 "note": live.get("note"), "gpus": live.get("gpus"), "sampled_at": live.get("at"),
+                                 "agent_tokens_m": (round(sup["tokens"] / 1e6, 2) if sup.get("tokens") is not None
+                                                    else None)}
         out = []
         for uid, hk in sorted(self.d.chain.uid_hotkeys(netuid).items()):
             if hk not in owners:
