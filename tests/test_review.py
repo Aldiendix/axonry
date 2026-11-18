@@ -68,7 +68,7 @@ def test_compares_with_earlier_content_of_other_hotkeys_only(tmp_path):
 
 def test_approves_only_when_all_checks_pass(tmp_path):
     ok = {k: {"ok": True, "reason": "fine"} for k in ("substantive", "conduct")}
-    good = {**ok, "original": {"ok": True, "reason": "new idea", "copies": None}, "message": "Looks good."}
+    good = {**ok, "original": {"ok": True, "reason": "new idea", "copies": None}, "message": "Looks good.", "read": True}
     gh = GH()
     auto.run(Reader({"review": [ITEM], "contents": CONTENTS}), gh, rules(), tmp_path, fake_model(tmp_path, good),
              once=True)
@@ -82,7 +82,13 @@ def test_approves_only_when_all_checks_pass(tmp_path):
     auto.run(Reader({"review": [ITEM], "contents": CONTENTS}), gh, rules(), tmp_path / "b", fake_model(tmp_path, copy),
              once=True)
     event, body = gh.posted[0][2:]
-    assert event == "REQUEST_CHANGES" and "100-1-pr3" in body and "original: FAIL" in body
+    assert event == "REQUEST_CHANGES" and "100-1-pr3" in body and "| Original | **Fail** |" in body
+
+    blind = {**good, "read": False, "substantive": {"ok": False, "reason": "could not read the files"}}
+    gh = GH()
+    auto.run(Reader({"review": [ITEM], "contents": CONTENTS}), gh, rules(), tmp_path / "c", fake_model(tmp_path, blind),
+             once=True)
+    assert gh.posted == []                           # a reviewer that could not read posts nothing: retried
 
 
 def test_a_failing_review_is_left_to_a_human(tmp_path):
@@ -98,7 +104,7 @@ def test_relative_workdir(tmp_path, monkeypatch):
     """The model runs with the workspace as its cwd: every path handed to it must be absolute."""
     monkeypatch.chdir(tmp_path)
     ok = {k: {"ok": True, "reason": "fine"} for k in ("substantive", "conduct")}
-    good = {**ok, "original": {"ok": True, "reason": "new", "copies": None}, "message": "ok"}
+    good = {**ok, "original": {"ok": True, "reason": "new", "copies": None}, "message": "ok", "read": True}
     gh = GH()
     auto.run(Reader({"review": [ITEM], "contents": []}), gh, rules(), Path("rel/review"), fake_model(tmp_path, good),
              once=True)

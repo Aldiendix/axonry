@@ -1,28 +1,68 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["substantive", "conduct", "original", "message"],
+  "required": [
+    "read",
+    "substantive",
+    "conduct",
+    "original",
+    "message"
+  ],
   "properties": {
-    "substantive": {"$ref": "#/$defs/check"},
-    "conduct": {"$ref": "#/$defs/check"},
+    "read": {
+      "type": "boolean",
+      "description": "true only if you could read every file of submission/ and earlier/"
+    },
+    "substantive": {
+      "$ref": "#/$defs/check"
+    },
+    "conduct": {
+      "$ref": "#/$defs/check"
+    },
     "original": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["ok", "reason", "copies"],
+      "required": [
+        "ok",
+        "reason",
+        "copies"
+      ],
       "properties": {
-        "ok": {"type": "boolean"},
-        "reason": {"type": "string"},
-        "copies": {"type": ["string", "null"], "description": "the earlier/ directory it copies, if it fails"}
+        "ok": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "copies": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "the earlier/ directory it copies, if it fails"
+        }
       }
     },
-    "message": {"type": "string"}
+    "message": {
+      "type": "string"
+    }
   },
   "$defs": {
     "check": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["ok", "reason"],
-      "properties": {"ok": {"type": "boolean"}, "reason": {"type": "string"}}
+      "required": [
+        "ok",
+        "reason"
+      ],
+      "properties": {
+        "ok": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
     }
   }
 }

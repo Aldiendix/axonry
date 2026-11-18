@@ -53,7 +53,8 @@ def prepare(gh, item, contents, rules, work: Path) -> Path:
     (ws / "earlier" / "INDEX.md").write_text("\n".join(index) + "\n")
     benches = ", ".join(registry.load_benchmark(k).doc["id"] for k in rules.benchmark_keys())
     (ws / "PROMPT.md").write_text(POLICY.read_text() + f"\nThe season's evaluation benchmarks: {benches}.\n\n"
-                                  "Answer with the JSON object the output schema describes.\n")
+                                  "Answer with the JSON object the output schema describes. Set `read` to true only "
+                                  "if you could read every file; if a tool failed, set it to false.\n")
     return ws
 
 
@@ -78,6 +79,8 @@ def ask_model(ws: Path, command: str, timeout=1800) -> dict:
     if p.returncode:
         raise RuntimeError(f"{argv[0]} exited {p.returncode}: {(p.stderr or p.stdout).strip()[-400:]}")
     v = json.loads(out.read_text())
+    if v.get("read") is not True:         # a tool failed: no verdict on the method, never a public refusal
+        raise RuntimeError(f"the reviewer could not read the workspace: {str(v.get('message'))[:300]}")
     for k in CHECKS:
         if not isinstance(v.get(k), dict) or not isinstance(v[k].get("ok"), bool):
             raise ValueError(f"verdict without {k}.ok")
@@ -89,12 +92,16 @@ def ask_model(ws: Path, command: str, timeout=1800) -> dict:
 def review_body(v: dict, item: dict) -> tuple[str, str]:
     """-> (GitHub event, public body). Approved only when all three checks pass."""
     ok = all(v[k]["ok"] for k in CHECKS)
-    lines = [v["message"].strip(), ""]
+    cell = lambda t: " ".join(str(t).split()).replace("|", "\\|")       # noqa: E731 - one table cell
+    lines = [f"### axonry review: {'approved' if ok else 'changes requested'}", "", v["message"].strip(), "",
+             "| Check | Result | Reason |", "|---|---|---|"]
     for k in CHECKS:
-        lines.append(f"- {k}: {'pass' if v[k]['ok'] else 'FAIL'} - {v[k].get('reason', '').strip()}")
-    if not v["original"]["ok"] and v["original"].get("copies"):
-        lines.append(f"  (copies earlier submission `{v['original']['copies']}`)")
-    lines += ["", f"Reviewed content {item['content_digest'][:16]} at commit {item['commit'][:12]} (axonry review)."]
+        why = v[k].get("reason", "")
+        if k == "original" and not v[k]["ok"] and v[k].get("copies"):
+            why += f" (copies `{v[k]['copies']}`)"
+        lines.append(f"| {k.capitalize()} | {'Pass' if v[k]['ok'] else '**Fail**'} | {cell(why)} |")
+    lines += ["", f"<sub>Content `{item['content_digest'][:16]}` at commit `{item['commit'][:12]}`. "
+                  "Checks: substantive, conduct and original, as in the review policy of axonry.</sub>"]
     return ("APPROVE" if ok else "REQUEST_CHANGES"), "\n".join(lines)[:60000]
 
 
