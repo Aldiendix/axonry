@@ -61,9 +61,10 @@ number of GPUs, the maximum run time, the price per GPU-hour and the agent budge
 in advance (`axonry-miner price`): every GPU hour up to the deadline plus the agent budget, plus a small margin
 (`fee.slippage`).
 
-- Fund the account of **the coldkey that owns the hotkey**: transfer TAO (or alpha of this subnet) from that coldkey
-  to the subnet owner's coldkey, any amount, at any time, as often as you like. Each transfer is credited in USD at
-  the price of its own block (alpha through the subnet's alpha price at that block) and keeps that value. The
+- Fund the account of **the coldkey that owns the hotkey**: transfer alpha of this subnet (the assets a season
+  accepts are in its rules) from that coldkey to the subnet's treasury (`fee.treasury` in the rules), any amount, at
+  any time, as often as you like. Each transfer is credited in USD at the price of its own block (through the
+  subnet's alpha price at that block) and keeps that value. The
   account pays for all of the coldkey's hotkeys; a transfer from any other coldkey does not count for your hotkey.
   Only plain transfers signed by the coldkey count (as made by `axonry-miner deposit`), not transfers through a
   proxy or multisig.
@@ -90,8 +91,8 @@ in advance (`axonry-miner price`): every GPU hour up to the deadline plus the ag
    A recipe of results is refused in review.
 3. **Fund the account of your hotkey's coldkey.**
    ```
-   axonry-miner price                                      # the most a run costs, in USD and TAO / alpha now
-   axonry-miner deposit --amount <TAO> --wallet <wallet> --hotkey <hotkey>   # checks the wallet's coldkey owns it
+   axonry-miner price                                      # the most a run costs, in USD and alpha now
+   axonry-miner deposit --amount <alpha> --wallet <wallet> --hotkey <hotkey>  # checks the wallet's coldkey owns it
    axonry-miner board <your coldkey>                       # your account: deposits, charged, held, available
    ```
 4. **Commit the content, then open the pull request** with exactly that directory. This is your hotkey's one

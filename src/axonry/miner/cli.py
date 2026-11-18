@@ -5,8 +5,8 @@
         entries not in the queue and why, recent matches with per-benchmark thresholds;
         MINER (a uid, hotkey, coldkey or submission id): that miner in full - account, entry, its run live (each
         GPU), timeline, admission and the result per benchmark
-  axonry-miner price                                    what a run costs at most, in USD and in TAO / alpha now
-  axonry-miner deposit --amount X --wallet W --hotkey H [--asset tao|alpha] [--yes]
+  axonry-miner price                                    what a run costs at most, in USD and in the accepted assets now
+  axonry-miner deposit --amount X --wallet W --hotkey H [--asset alpha|tao] [--yes]
         transfer from the coldkey owning H to the subnet; credited in USD at that block's price to that coldkey's
         account, which pays H's run
   axonry-miner commit --dir DIR --github LOGIN --wallet W --hotkey H [--yes]
@@ -160,6 +160,7 @@ def cmd_deposit(a, r):
     from ..chain.subtensor import Chain, submit_deposit  # noqa: PLC0415
 
     rules = r.rules()
+    a.asset = a.asset or rules["fee"]["assets"][0]
     if a.asset not in rules["fee"]["assets"]:
         raise SystemExit(f"{a.asset} is not accepted (accepted: {', '.join(rules['fee']['assets'])})")
     wallet = Wallet(name=a.wallet, hotkey=a.hotkey, **({"path": a.wallet_path} if a.wallet_path else {}))
@@ -196,7 +197,7 @@ def main(argv=None):
     c.add_argument("--github", required=True, help="GitHub login that opens (or opened) the pull request")
     d = sub.add_parser("deposit", help="fund the account of the coldkey that owns the hotkey")
     d.add_argument("--amount", type=float, required=True)
-    d.add_argument("--asset", choices=("tao", "alpha"), default="tao")
+    d.add_argument("--asset", choices=("tao", "alpha"), help="default: the first asset the season accepts")
     d.add_argument("--hotkey", required=True, help="the miner hotkey (wallet hotkey name) this deposit pays for")
     d.add_argument("--stake-hotkey", help="alpha: the hotkey (ss58) the stake to move sits on (default: --hotkey's)")
     for s in (c, d):

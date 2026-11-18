@@ -328,7 +328,9 @@ def registry_copy(tmp_path, **rules_patch):
             if d.name != "s1":
                 shutil.rmtree(d)
     rules_file = next((root / "seasons" / "s1").glob("*.json"))
-    doc = {**json.loads(rules_file.read_text()), **rules_patch}
+    doc = json.loads(rules_file.read_text())
+    doc["fee"]["assets"] = ["tao", "alpha"]             # the tests pay in both
+    doc = {**doc, **rules_patch}
     write_json(rules_file, {k: v for k, v in doc.items() if v is not None})
     return root
 

@@ -25,7 +25,6 @@
  "effective_block": 9538688,
  "fee": {
   "assets": [
-   "tao",
    "alpha"
   ],
   "slippage": 0.02,
