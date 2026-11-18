@@ -69,7 +69,7 @@ def commitment_call(netuid: int, text: str):
 
 
 def submit_commitment(subtensor, wallet, netuid: int, text: str):
-    """Miner side: a content commitment, signed by the hotkey, which must be registered on the subnet (no fee).
+    """Miner side: a content commitment, signed by the hotkey, which must be registered on the subnet.
     -> (block, index)."""
     res = subtensor.submit_call(commitment_call(netuid, text), wallet, signer="hotkey")
     res.raise_for_failure()

@@ -29,7 +29,7 @@
    "alpha"
   ],
   "slippage": 0.02,
-  "treasury": "5HDnT2yz6pJE2dWvKDvmCoXFJvzHCtecupTHSnMcqSxHLkpG",
+  "treasury": "5GH1KV93vdRPNYd85aKoZyhHZBv9ESDWbUh4WdGHUHYc8f5W",
   "usd_per_gpu_hour": 2
  },
  "initial_champion": "loop-ablation",

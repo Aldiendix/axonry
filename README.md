@@ -69,7 +69,10 @@ in advance (`axonry-miner price`): every GPU hour up to the deadline plus the ag
    ```
 2. **Write your method.** Fork the competition repository and add one directory
    `submissions/<your hotkey>/<entry>/`. Follow the repository's README for its contents and limits, and use its
-   toolkit to try your idea first.
+   toolkit to try your idea first. The method explains the problem and how to solve it: the behavior to change, why
+   you think the model does it, and the approach that finds and makes the edit. It does not hand the agent a result
+   to apply: which layers, units, directions or values to change come out of the run, not out of your submission.
+   A recipe of results is refused in review.
 3. **Fund the account of your hotkey's coldkey.**
    ```
    axonry-miner price                                      # the most a run costs, in USD and TAO / alpha now
@@ -82,7 +85,7 @@ in advance (`axonry-miner price`): every GPU hour up to the deadline plus the ag
    axonry-miner commit --dir submissions/<your hotkey>/<entry> --github <your GitHub login> --wallet <wallet> --hotkey <hotkey>
    ```
    This sets the commitment `<content digest>:<GitHub user id>` on the subnet, signed by the hotkey (it must be
-   registered and must never have committed before; there is no fee). The pull request must touch that hotkey's
+   registered and must never have committed before). The pull request must touch that hotkey's
    directory, be opened by that GitHub account (the id is looked up from your login; unlike a login it can never
    pass to someone else) and hold exactly the committed content. So nobody else can enter in your name or spend your
    funds. Keep the hotkey safe: it commits, and so it spends that account.

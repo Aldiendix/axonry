@@ -324,6 +324,9 @@ def registry_copy(tmp_path, **rules_patch):
     root = tmp_path / "registry"
     if not root.exists():
         shutil.copytree(registry.ROOT, root)
+        for d in (root / "seasons").iterdir():          # the tests run season s1 alone
+            if d.name != "s1":
+                shutil.rmtree(d)
     rules_file = next((root / "seasons" / "s1").glob("*.json"))
     doc = {**json.loads(rules_file.read_text()), **rules_patch}
     write_json(rules_file, {k: v for k, v in doc.items() if v is not None})

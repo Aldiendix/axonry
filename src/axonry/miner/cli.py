@@ -11,7 +11,7 @@
         account, which pays H's run
   axonry-miner commit --dir DIR --github LOGIN --wallet W --hotkey H [--yes]
         the entry of hotkey H, once: set_commitment "<digest>:<GitHub id of LOGIN>" signed by H (registered on the
-        subnet; no fee); only a PR by LOGIN, in H's directory, with exactly this content can carry it
+        subnet); only a PR by LOGIN, in H's directory, with exactly this content can carry it
 One registration is one entry: only a hotkey's first commitment counts, and the content and GitHub account it names
 can never change. Commit first and push only after the command returns: a content belongs to its earliest commitment,
 and content pushed before it is committed can be copied and committed first by others. The run is paid by the
