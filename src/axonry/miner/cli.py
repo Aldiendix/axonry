@@ -85,7 +85,8 @@ def cmd_price(r, network):
     print(f"  held     {top:.2f} USD: your account must hold this before review")
     try:
         usd, note = asset_usd(network, rules)
-        print("  send     " + " or ".join(f"{top * pad / v:.6f} {a}" for a, v in usd.items()) + f" now ({note})")
+        print("  send     " + " or ".join(f"{top * pad / v:.6f} {a}" for a, v in usd.items())
+              + f" now: {pad - 1:.0%} more than held is recommended, for the price moving before the block ({note})")
     except Exception as e:  # noqa: BLE001 - the price sources are unreachable from here: the USD figures stand
         print(f"  now      no price available here ({str(e)[:120]})")
     print("Nothing is charged until the run starts. Each full GPU hour is charged as it passes; the rest of the GPU time\n"
