@@ -22,7 +22,7 @@
   "repo": "AxOrganization/WeightSpaceProgramming",
   "rules_sha256": "53ce964560d57d8dfb3995ab41e0fabb76c4247c17be126c5c7ba49a2b9328cb"
  },
- "effective_block": 9538688,
+ "effective_block": 9531700,
  "fee": {
   "assets": [
    "alpha"
@@ -31,7 +31,6 @@
   "treasury": "5GH1KV93vdRPNYd85aKoZyhHZBv9ESDWbUh4WdGHUHYc8f5W",
   "usd_per_gpu_hour": 2
  },
- "initial_champion": "loop-ablation",
  "judge": {
   "n_win": 2,
   "z_tie": 2.0,
