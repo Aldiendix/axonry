@@ -100,6 +100,12 @@ class ArbosRunner:
         self._run = runner or self._subprocess
 
     @property
+    def model(self) -> str | None:
+        """The model the agent itself runs on (its talking slot), without the vendor prefix."""
+        mid = ((self.models or {}).get("talking_model") or {}).get("id")
+        return mid.split("/")[-1] if mid else None
+
+    @property
     def capacity(self) -> int:
         return sum(self.accounts.values())
 
@@ -176,7 +182,7 @@ class ArbosRunner:
         if not chat:
             raise ArbosError(f"chat open returned no id: {opened}")
         time.sleep(3)  # arbos' own driver: let the box join a brand-new room before the first send
-        return RunHandle(sid, project, chat, {"account": account})
+        return RunHandle(sid, project, chat, {"account": account, **({"model": self.model} if self.model else {})})
 
     def kickoff(self, h, message, bundle: Path):
         h.data["usd_base"], h.data["tokens_base"] = self._project_use(h)   # the project's use before this run

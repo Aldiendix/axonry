@@ -492,6 +492,7 @@ class Orchestrator:
             end = self.now()
             self._bill(s, end=end, agent_usd=st.get("usd"))
             self.db.update(sid, "COLLECTING", record_patch={
+                "run": self._run_view(s, {**r, "sup_state": st}, end),     # as status.json showed it, at its end
                 "agent_log": "published" if exported else "unavailable",
                 "agent_outcome": outcome,
                 "agent": {**s["record"].get("agent", {}), "usd": st.get("usd")},
@@ -942,6 +943,18 @@ class Orchestrator:
             live = {}
         return {**live, "at": self.now()}
 
+    def _run_view(self, s, r, at):
+        """A run as published: live in status.json while it runs, and kept in its record when it ends."""
+        sup, handle = r.get("sup_state") or {}, (r.get("handle") or {}).get("data") or {}
+        live, kick = sup.get("live") or {}, s["record"]["timeline"].get("kickoff")
+        return {"sid": s["sid"], "deadline": (r.get("task") or {}).get("run", {}).get("deadline"),
+                "note": live.get("note"), "gpus": live.get("gpus"), "sampled_at": live.get("at"),
+                "agent_model": handle.get("model") or getattr(self.d.runner, "model", None),
+                "agent_tokens_m": round(sup["tokens"] / 1e6, 2) if sup.get("tokens") is not None else None,
+                "agent_usd": round(sup["usd"], 2) if sup.get("usd") is not None else None,
+                "gpu_usd": (round(pricing.used_musd(self.rules_for(s["sid"]), at - kick) / pricing.MUSD, 2)
+                            if kick else None)}
+
     def _miners(self, netuid, accounts):
         """Who is registered right now, with what a miner's page shows: [{uid, hotkey, coldkey, entry (the sid of its
         one entry, None before it commits), account (its coldkey's balance), run (its run in progress: deadline, the
@@ -950,13 +963,7 @@ class Orchestrator:
         owners = self.__dict__.setdefault("_owners", {})
         runs = {}
         for s in self.db.subs(status=("RUNNING",)):
-            r = self.db.run(s["sid"]) or {}
-            sup = r.get("sup_state") or {}
-            live = sup.get("live") or {}
-            runs[s["hotkey"]] = {"sid": s["sid"], "deadline": (r.get("task") or {}).get("run", {}).get("deadline"),
-                                 "note": live.get("note"), "gpus": live.get("gpus"), "sampled_at": live.get("at"),
-                                 "agent_tokens_m": (round(sup["tokens"] / 1e6, 2) if sup.get("tokens") is not None
-                                                    else None)}
+            runs[s["hotkey"]] = self._run_view(s, self.db.run(s["sid"]) or {}, self.now())
         out = []
         for uid, hk in sorted(self.d.chain.uid_hotkeys(netuid).items()):
             if hk not in owners:

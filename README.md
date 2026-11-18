@@ -149,8 +149,8 @@ Everything the subnet decides is published at `https://storage.axonry.ai` and ca
 
 - the rules, every version (they change only by new versions, from a given block; the champion carries on);
 - the live queue (`status.json`, about once a minute): every registered miner with its account (deposits,
-  charges, held, available, in USD) and, while it runs, its run's progress line, GPU use and the agent's tokens so
-  far (millions);
+  charges, held, available, in USD) and, while it runs, its run's progress line, GPU use, the agent's model, its
+  tokens so far (millions) and what the run has cost so far (agent and GPUs, in USD);
 - for every submission: its record, admission result, per-question results, scores, edit and agent log;
 - the signed weights.
 
