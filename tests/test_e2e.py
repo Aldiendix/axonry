@@ -485,7 +485,8 @@ def test_accounts_and_fees(tmp_path):
     from axonry.miner.board import board, detail
     reader = miner.PublicReader(store=pub)
     st_doc = reader.get(layout.STATUS)
-    assert "GPU 97%" in board(st_doc, None, color=False)                       # the overview: the run live
+    over = board(st_doc, None, color=False)                                     # the overview: time left, status
+    assert "3h30m left · Screening directions" in over and "GPU" not in over.split("2. Not in queue")[0]
     text = detail(reader, st_doc, None, str(m["uid"]), color=False)            # one miner in full
     assert "RUN (live" in text and "GPU 3" in text and " 97%" in text and "best so far +2.1" in text
     clock.t += 300

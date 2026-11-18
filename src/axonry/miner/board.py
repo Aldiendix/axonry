@@ -120,10 +120,7 @@ def board(status: dict, matches: dict | None, n=20, color=None) -> str:
     for i, x in enumerate(queue, 1):
         label, col = STAGE.get(x["status"], (x["status"].lower(), ""))
         run = (miners.get(x["hotkey"]) or {}).get("run") or {}
-        gpus = run.get("gpus") or []
-        live = " · ".join(t for t in (f"{_left(x.get('deadline'), now)} left",
-                                      f"GPU {sum(g['util_pct'] for g in gpus) // len(gpus)}%" if gpus else None,
-                                      clean(run.get("note"))) if t)
+        live = " · ".join(t for t in (f"{_left(x.get('deadline'), now)} left", clean(run.get("note"))) if t)
         detail = {"RUNNING": clean(live, 70),
                   "QUEUED": f"position {x.get('position', '-')}: waiting for a machine",
                   "STARTING": "its machine is being set up",
@@ -183,7 +180,7 @@ def _ts(t):
 
 def _left(deadline, now):
     m = max(int((deadline or now) - now), 0) // 60
-    return f"{m // 60} h {m % 60:02d} min"
+    return f"{m // 60}h{m % 60:02d}m"
 
 
 # ---- one miner in full ------------------------------------------------------------------------------------------
