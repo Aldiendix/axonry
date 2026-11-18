@@ -46,9 +46,13 @@ class DB:
         self.c.executescript(SCHEMA)
 
     def _from_seasons(self):
-        if "season" not in {r["name"] for r in self.c.execute("PRAGMA table_info(submissions)")}:
+        old = lambda: "season" in {r["name"] for r in self.c.execute("PRAGMA table_info(submissions)")}  # noqa: E731
+        if not old():
             return
-        self.c.execute("BEGIN IMMEDIATE")
+        self.c.execute("BEGIN IMMEDIATE")      # main and eval open the DB at once: one moves it, the other sees it moved
+        if not old():
+            self.c.execute("COMMIT")
+            return
         for table in ("submissions", "champions"):
             self.c.execute(f"ALTER TABLE {table} RENAME COLUMN season TO base")
             for old, base in _SEASONS.items():
@@ -77,7 +81,7 @@ class DB:
 
     # ---- submissions
     def add_submission(self, sid, base, hotkey, coldkey, status, record, content_digest, prio):
-        """A hotkey's one submission (unique per hotkey: one registration, one entry)."""
+        """A hotkey's submission (one registration, one entry; the owner's hotkey may enter more than once)."""
         now = time.time()
         self.c.execute("INSERT OR IGNORE INTO submissions(sid,base,hotkey,coldkey,status,content_digest,record,"
                        "created_at,updated_at,prio_block,prio_index) VALUES(?,?,?,?,?,?,?,?,?,?,?)",

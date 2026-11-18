@@ -70,13 +70,3 @@ def compare(c_results: dict, r_results: dict, bench_params: dict, judge: dict) -
     return {"benchmarks": {k: asdict(v) for k, v in out.items()}, "wins": wins, "tie_all": tie_all,
             "dominates": tie_all and wins >= judge["n_win"]}
 
-
-def pareto_front(models: dict, bench_params: dict, judge: dict) -> list:
-    """models: {model_id: Results}. -> ids not dominated by any other model (stable order of input)."""
-    ids = list(models)
-    dominated = set()
-    for a in ids:
-        for b in ids:
-            if a != b and b not in dominated and compare(models[a], models[b], bench_params, judge)["dominates"]:
-                dominated.add(b)
-    return [i for i in ids if i not in dominated]

@@ -781,9 +781,9 @@ class Orchestrator:
 
     def _publish_line(self, base):
         """models/<base>/line.json: the base model's line in one file - champion and succession, the base model's own
-        accuracy (the first reference), the Pareto front, and one row per entry (status, decision, reference and per
+        accuracy (the first reference), and one row per entry (status, decision, reference and per
         benchmark [accuracy, not-worse-at, win-at, verdict]). Every figure in it also lives in write-once files."""
-        rows, models = [], {}
+        rows = []
         champ = self.db.champion(base)
         for s in self.db.subs(base=base):
             r = s["record"]
@@ -792,25 +792,13 @@ class Orchestrator:
                          "reference": r.get("reference"), "scores": r.get("scores"),
                          "pr": (r.get("pr") or {}).get("number"), "title": (r.get("pr") or {}).get("title"),
                          "decided_at": s["decided_at"]})
-            if s["status"] == "PUBLISHED":
-                models[s["sid"]] = self.db.results(s["sid"])
-        base_id, front, accuracy = f"base:{base}", [], {}
-        try:
-            rules = registry.load_rules_versions(base, self.d.registry_root)[-1]
-            params = {k: rules.judge_params(k) for k in rules.benchmark_keys()}
-            pool = {m: v for m, v in {base_id: self.db.results(base_id), **models}.items() if set(params) <= set(v)}
-            if pool:
-                front = judge.pareto_front(pool, params, rules["judge"])
-            accuracy = {m: {k: round(judge.accuracy(pool[m][k]), 4) for k in params} for m in pool}
-        except (registry.RegistryError, judge.JudgeError):
-            pass
+        base_id, ref = f"base:{base}", self.db.results(f"base:{base}")
         publisher.publish_line(self.d.public, base, {
             "champion": ({"sid": champ["sid"], "hotkey": champ["hotkey"], "since_block": champ["block"]}
                          if champ else None),
             "history": [{"seq": c["seq"], "sid": c["sid"], "hotkey": c["hotkey"], "block": c["block"],
                          "evidence": json.loads(c["evidence"])} for c in self.db.champions(base)],
-            "base_model": {"id": base_id, "accuracy": accuracy.get(base_id)},
-            "pareto_front": [{"id": m, "accuracy": accuracy.get(m)} for m in front],
+            "base_model": {"id": base_id, "accuracy": {k: round(judge.accuracy(v), 4) for k, v in ref.items()} or None},
             "entries": rows})
 
     def _in_force(self, head):

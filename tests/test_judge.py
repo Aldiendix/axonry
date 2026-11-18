@@ -42,9 +42,3 @@ def test_one_regression_blocks_domination():
     r = judge.compare({"a": up(base["a"]), "b": up(base["b"]), "c": down}, base, PARAMS, JUDGE)
     assert r["wins"] == 2 and not r["benchmarks"]["c"]["tie_ok"] and not r["dominates"]
 
-
-def test_pareto_front():
-    base = {"a": scores(0.4, seed=1), "b": scores(0.4, seed=2), "c": scores(0.4, seed=3)}
-    up = lambda s: {k: [1.0] * 4 if i % 4 == 0 else v for i, (k, v) in enumerate(s.items())}  # noqa: E731
-    x = {"a": up(base["a"]), "b": up(base["b"]), "c": base["c"]}
-    assert judge.pareto_front({"base": base, "x": x}, PARAMS, JUDGE) == ["x"]
