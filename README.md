@@ -58,8 +58,7 @@ deregistered champion's weight is burned until it registers again).
 
 **Fees.** You pay for your run's GPU time and its agent's model use. The season's rules publish the GPU model, the
 number of GPUs, the maximum run time, the price per GPU-hour and the agent budget, so the most a run can cost is known
-in advance (`axonry-miner price`): every GPU hour up to the deadline plus the agent budget, plus a small margin
-(`fee.slippage`).
+in advance (`axonry-miner price`): every GPU hour up to the deadline plus the agent budget.
 
 - Fund the account of **the coldkey that owns the hotkey**: transfer alpha of this subnet (the assets a season
   accepts are in its rules) from that coldkey to the subnet's treasury (`fee.treasury` in the rules), any amount, at

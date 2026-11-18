@@ -3,7 +3,8 @@
 An account is the sum of a coldkey's deposits to the treasury, each converted to USD at its own moment (TAO/USD at
 the deposit's block time; alpha through the subnet's alpha price at the deposit's block), minus the run charges.
 Before review the account must cover a run's maximum: every GPU hour up to the deadline plus the agent budget
-(run.max_agent_usd), plus fee.slippage on top.
+(run.max_agent_usd). fee.slippage only pads the transfer the miner tool suggests, for the price moving before its
+block; it is never required.
 alpha price (TAO per alpha) comes from chain state (exact, reproducible).
 TAO/USD has no on-chain source: median of the external sources that answer (>= 2); refuse when they disagree.
 Amounts are integer micro-USD.
@@ -50,8 +51,8 @@ def agent_max_musd(rules) -> int:
 
 
 def run_cost_musd(rules) -> int:
-    """What a run holds from its account until it ends: its GPU hours and agent budget, plus fee.slippage."""
-    return int(round((gpu_max_musd(rules) + agent_max_musd(rules)) * (1 + rules["fee"].get("slippage", 0))))
+    """What a run holds from its account until it ends: its GPU hours and agent budget."""
+    return gpu_max_musd(rules) + agent_max_musd(rules)
 
 
 def used_musd(rules, seconds: float) -> int:

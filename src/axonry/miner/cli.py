@@ -77,17 +77,15 @@ def cmd_price(r, network):
     from .. import pricing  # noqa: PLC0415
     rules = r.rules()
     run, top = rules["run"], pricing.run_cost_musd(rules) / pricing.MUSD
-    slip = rules["fee"].get("slippage", 0)
+    pad = 1 + rules["fee"].get("slippage", 0)          # what to send: room for the price moving before the block
     print(f"a run: {run['gpus']} x {run['gpu_model']}, at most {run['hours']} h")
     print(f"  GPUs     {rules['fee']['usd_per_gpu_hour']} USD per GPU-hour, at most "
           f"{pricing.gpu_max_musd(rules) / pricing.MUSD:.2f} USD")
     print(f"  agent    its model use, at most {run['max_agent_usd']:.2f} USD")
-    if slip:
-        print(f"  margin   {slip:.0%}")
     print(f"  held     {top:.2f} USD: your account must hold this before review")
     try:
         usd, note = asset_usd(network, rules)
-        print("  now      " + " or ".join(f"{top / v:.6f} {a}" for a, v in usd.items()) + f" ({note})")
+        print("  send     " + " or ".join(f"{top * pad / v:.6f} {a}" for a, v in usd.items()) + f" now ({note})")
     except Exception as e:  # noqa: BLE001 - the price sources are unreachable from here: the USD figures stand
         print(f"  now      no price available here ({str(e)[:120]})")
     print("Nothing is charged until the run starts. Each full GPU hour is charged as it passes; the rest of the GPU time\n"
@@ -196,7 +194,8 @@ def cmd_deposit(a, r):
             per = asset_usd(a.network, rules)[0][a.asset]
         except Exception as e:  # noqa: BLE001
             raise SystemExit(f"no price available here ({str(e)[:120]}): give --amount") from None
-        a.amount = round((top - have) / per * 1.01 + 5e-7, 6)    # 1% for the price moving before the block
+        pad = 1 + rules["fee"].get("slippage", 0)       # room for the price moving before the block
+        a.amount = round((top * pad - have) / per + 5e-7, 6)
         print(f"the account has {have:.2f} of the {top:.2f} USD a run holds: {a.amount} {a.asset} covers the rest")
     treasury, amount = rules["fee"]["treasury"], int(round(a.amount * pricing.RAO))
     staked = a.stake_hotkey or hk
