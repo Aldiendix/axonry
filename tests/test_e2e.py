@@ -147,7 +147,7 @@ class FakeGitHub:
                 hk = p["dir"].split("/")[1]
                 out.append(PRCandidate(n, p["author"], hk, "e1", p["dir"], None, p["head_sha"],
                                        content_digest_of_blobs(self.commits[p["head_sha"]]), p.get("title", ""),
-                                       self.pr(n)["author_id"]))
+                                       self.pr(n)["author_id"], p.get("opened_at")))
         return out
 
 
@@ -330,6 +330,7 @@ def registry_copy(tmp_path, **rules_patch):
     rules_file = next((root / "seasons" / "s1").glob("*.json"))
     doc = json.loads(rules_file.read_text())
     doc["fee"]["assets"] = ["tao", "alpha"]             # the tests pay in both
+    doc.pop("open_block", None)                         # open from the first block unless a test says otherwise
     doc = {**doc, **rules_patch}
     write_json(rules_file, {k: v for k, v in doc.items() if v is not None})
     return root
@@ -994,3 +995,34 @@ def test_a_new_season_takes_over_the_weights_at_its_block(tmp_path):
     w = json.loads(pub.get(layout.WEIGHTS))
     assert w["season"] == "s2" and w["weights"] == [{"hotkey": None, "uid": 0, "weight": 1.0}]
     assert json.loads(pub.get(layout.INDEX))["current_season"] == "s2"
+
+
+def test_commitments_before_the_opening_block_count_for_nothing(tmp_path):
+    """Before open_block only the subnet owner's commitment (the opening entry) counts; a miner's earlier
+    commitment is void and its first commitment from open_block on is its entry."""
+    orch, chain, clock, pub = make(tmp_path)
+    orch.d.registry_root = registry_copy(tmp_path, effective_block=100, open_block=110)
+    commit(chain, "A", blobs_for("A"), 101)
+    chain.blocks.setdefault(102, []).append(
+        Commitment(102, 1, OWNER.ss58_address, content_digest_of_blobs(blobs_for("B")), 1, Clock.t))
+    chain.head = 105
+    orch.intake()
+    assert [s["hotkey"] for s in orch.db.subs()] == [OWNER.ss58_address]
+    commit(chain, "A", blobs_for("A"), 111)
+    chain.head = 111
+    orch.intake()
+    assert orch.db.of_hotkey(HOTKEYS["A"])["sid"] == "0000000111-0001"
+
+
+def test_a_pr_opened_before_its_commitment_carries_nothing(tmp_path):
+    orch, chain, clock, pub = make(tmp_path)
+    orch.bootstrap()
+    gh = orch.d.github
+    deposit(chain, "A", 101, FEE)
+    commit(chain, "A", blobs_for("A"), 101)
+    gh.add_pr(1, HOTKEYS["A"], "a1", blobs_for("A"))
+    gh.prs[1]["opened_at"] = int(Clock.t) - 60          # pushed before the commitment: anyone could have copied it
+    chain.head = 101
+    open_season(orch, 101)
+    (s,) = orch.db.subs()
+    assert s["reason_code"] == "NO_PR" and "opened before" in orch.db.get("prs")["1"]["reason"]

@@ -88,6 +88,8 @@ def main(argv=None):
     ch.add_argument("pr", type=int)
     ch.add_argument("--body", required=True)
     a = ap.parse_args(argv)
+    from ..orchestrator.cli import load_dotenv  # noqa: PLC0415
+    load_dotenv()                             # AXONRY_REVIEW_TOKEN may live in .env, as the orchestrator's secrets do
     reader = PublicReader(public_url(a.network))
     rules = registry.latest_rules()
     gh = GitHub(rules["competition"]["repo"], os.environ.get("AXONRY_REVIEW_TOKEN"))

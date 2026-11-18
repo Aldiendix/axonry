@@ -5,7 +5,7 @@ entry: the hotkey's first commitment on the subnet ("<content digest>:<GitHub id
 takes only from a registered hotkey) is its one submission, for good. Its money is its coldkey's: deposits are
 transfers from the coldkey that owns the hotkey, and the fee is charged to that coldkey's account at approval.
 A PR carries the submission when it is open in submissions/<hotkey>/<entry>/, by the committed GitHub id, with
-exactly the committed content. A content committed earlier by another hotkey is a copy.
+exactly the committed content, and was opened after the commitment's block. A content committed earlier by another hotkey is a copy.
 """
 import json
 
@@ -34,6 +34,8 @@ def carrier_problem(s, p) -> str | None:
         return f"the PR is by {p.author} (GitHub id {p.author_id}); the commitment names GitHub id {s['record']['github_id']}"
     if p.digest != s["content_digest"]:
         return f"the PR content {(p.digest or '')[:12]} is not the committed content {s['content_digest'][:12]}"
+    if p.opened_at is not None and p.opened_at < s["record"]["timeline"]["committed"]:
+        return "the PR was opened before the commitment's block: commit first, then open the PR"
     return None
 
 

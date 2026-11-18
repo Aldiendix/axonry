@@ -10,6 +10,7 @@ import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime
 
 from ..common.digest import content_digest_of_blobs
 
@@ -29,6 +30,7 @@ class PRCandidate:
     digest: str | None = None                 # content_digest of the directory at the head
     title: str = ""                           # the PR title (shown publicly, sanitized by readers)
     author_id: int | None = None              # the author's numeric GitHub id (logins can be renamed and reused)
+    opened_at: int | None = None              # when the PR was opened (unix time)
 
 
 class GitHub:
@@ -180,6 +182,10 @@ def check_files(blobs: dict, comp_rules: dict) -> str | None:
     return None
 
 
+def _unix(iso: str | None) -> int | None:
+    return int(datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()) if iso else None
+
+
 def scan(gh: GitHub, comp_rules: dict) -> list[PRCandidate]:
     out = []
     for pr in gh.open_prs():
@@ -189,7 +195,7 @@ def scan(gh: GitHub, comp_rules: dict) -> list[PRCandidate]:
                 gh._files_cache[(n, head)] = gh.pr_files(n)
             hk, entry, d, problem = submission_dir(gh._files_cache[(n, head)], comp_rules["submission"]["path_pattern"])
             c = PRCandidate(n, pr["user"]["login"], hk, entry, d, problem, head, title=pr.get("title") or "",
-                            author_id=pr["user"]["id"])
+                            author_id=pr["user"]["id"], opened_at=_unix(pr.get("created_at")))
             if not problem:
                 c.digest = gh.dir_digest(head, d)
         except (urllib.error.URLError, RuntimeError) as e:

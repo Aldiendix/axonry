@@ -101,9 +101,10 @@ in advance (`axonry-miner price`): every GPU hour up to the deadline plus the ag
    axonry-miner commit --dir submissions/<your hotkey>/<entry> --github <your GitHub login> --wallet <wallet> --hotkey <hotkey>
    ```
    This sets the commitment `<content digest>:<GitHub user id>` on the subnet, signed by the hotkey (it must be
-   registered and must never have committed before). The pull request must touch that hotkey's
-   directory, be opened by that GitHub account (the id is looked up from your login; unlike a login it can never
-   pass to someone else) and hold exactly the committed content. So nobody else can enter in your name or spend your
+   registered and must never have committed before). Commitments count from the opening block of the rules
+   (`open_block`); an earlier one is void. The pull request must touch that hotkey's directory, be opened by that
+   GitHub account (the id is looked up from your login; unlike a login it can never pass to someone else) after the
+   commitment's block, and hold exactly the committed content. So nobody else can enter in your name or spend your
    funds. Keep the hotkey safe: it commits, and so it spends that account.
 5. **The pull request only carries the content.** Rebasing it, or closing it and opening another with the same
    content, changes nothing. The content itself can never change: a different version is not your entry (and a
